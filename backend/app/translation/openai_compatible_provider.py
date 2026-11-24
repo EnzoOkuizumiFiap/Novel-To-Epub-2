@@ -29,7 +29,7 @@ from app.translation.gemini_provider import (
     _TranslationOutput,
     _build_system_prompt,
 )
-from app.translation.glossary import GlossaryEntry
+from app.translation.glossary import ENTRY_KINDS, GlossaryEntry
 from app.translation.provider import TranslationProvider, TranslationResult
 
 log = get_logger("openai-compat")
@@ -91,7 +91,7 @@ Responda EXCLUSIVAMENTE com um JSON neste formato (sem markdown, sem comentário
     {
       "term": "termo original em inglês",
       "canonical_pt": "forma em PT (igual ao term pra nomes próprios)",
-      "kind": "character|place|ability|organization|system_term|other",
+      "kind": "__KINDS__",
       "gender": "male|female|non-binary|unknown|n/a",
       "notes": "1 frase de contexto",
       "confidence": "high|medium|low"
@@ -100,7 +100,7 @@ Responda EXCLUSIVAMENTE com um JSON neste formato (sem markdown, sem comentário
 }
 
 NÃO escreva nada antes ou depois do JSON. NÃO use blocos ```json.
-"""
+""".replace("__KINDS__", "|".join(ENTRY_KINDS))
 
 
 def _safe_json_parse(text: str) -> dict[str, Any] | None:

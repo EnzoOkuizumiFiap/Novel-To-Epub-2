@@ -18,7 +18,28 @@ from sqlalchemy import select
 from app.db import models as orm
 from app.db.database import get_session, init_db
 
-EntryKind = Literal["character", "place", "ability", "system_term", "other"]
+ENTRY_KINDS: tuple[str, ...] = (
+    "character",
+    "place",
+    "ability",
+    "organization",
+    "system_term",
+    "item",
+    "title",
+    "culture",
+    "other",
+)
+EntryKind = Literal[
+    "character",
+    "place",
+    "ability",
+    "organization",
+    "system_term",
+    "item",
+    "title",
+    "culture",
+    "other",
+]
 Gender = Literal["male", "female", "non-binary", "unknown", "n/a"]
 Confidence = Literal["high", "medium", "low"]
 Source = Literal["llm", "wiki", "manual"]
@@ -61,9 +82,7 @@ _CONF_RANK = {"high": 3, "medium": 2, "low": 1}
 # lexical exata — embeddings sao ruins justamente pra nome proprio inventado) e
 # completamos com o elenco principal.
 
-_KIND_PRIORITY = {
-    "character": 0, "place": 1, "ability": 2, "organization": 3, "system_term": 4, "other": 5,
-}
+_KIND_PRIORITY = {k: i for i, k in enumerate(ENTRY_KINDS)}
 _WORD = re.compile(r"[^\W_]+(?:['’][^\W_]+)*")
 _TAG = re.compile(r"<[^>]+>")
 # Personagens sempre incluidos mesmo sem aparecer no capitulo (pronomes/voz do

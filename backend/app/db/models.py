@@ -224,7 +224,7 @@ class Glossary(Base):
     )
     term: Mapped[str] = mapped_column(String(255))            # original (en)
     canonical_pt: Mapped[str] = mapped_column(String(255))    # traducao canonica
-    kind: Mapped[str] = mapped_column(String(30))             # character|place|ability|system_term|other
+    kind: Mapped[str] = mapped_column(String(30))             # character|place|ability|organization|system_term|item|title|culture|other
     gender: Mapped[str] = mapped_column(String(20), default="n/a")  # male|female|non-binary|unknown|n/a
     notes: Mapped[str] = mapped_column(Text, default="")
     confidence: Mapped[str] = mapped_column(String(10), default="medium")  # high|medium|low

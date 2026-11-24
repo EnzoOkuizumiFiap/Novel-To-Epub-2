@@ -295,7 +295,7 @@ def _glossary_summary(glossary: list[GlossaryEntry], limit: int = 12) -> str:
     things = [
         e
         for e in glossary
-        if e.kind in ("place", "ability", "organization", "system_term")
+        if e.kind in ("place", "ability", "organization", "system_term", "item", "culture")
     ][: limit // 2]
     lines = []
     for e in chars + things:

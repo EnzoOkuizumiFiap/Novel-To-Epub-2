@@ -1,7 +1,9 @@
 """Selecao do glossario por capitulo + formatacao com orcamento."""
 
+from app.translation.claude_provider import _OUTPUT_SCHEMA as _CLAUDE_SCHEMA
 from app.translation.gemini_provider import _format_glossary
-from app.translation.glossary import GlossaryEntry, select_for_chapter
+from app.translation.glossary import ENTRY_KINDS, GlossaryEntry, select_for_chapter
+from app.translation.openai_compatible_provider import _schema_instruction
 
 
 def E(term, kind="other", first=None, notes="", conf="medium"):
@@ -54,3 +56,19 @@ def test_format_keeps_given_order_and_drops_notes_before_entries():
     assert all(f"- Term{i} " in text for i in range(40))  # cap inteiro coube...
     assert "nnn" not in text  # ...porque as notes sairam antes
     assert "omitidas" in text and "- Cast39 " not in text  # o corte foi no enchimento
+
+
+def test_expanded_kinds_synced_across_providers_and_priority_order():
+    for expected in ("item", "title", "culture"):
+        assert expected in ENTRY_KINDS
+    assert _CLAUDE_SCHEMA["properties"]["new_glossary_entries"]["items"]["properties"]["kind"]["enum"] == list(ENTRY_KINDS)
+    assert "|".join(ENTRY_KINDS) in _schema_instruction()
+
+    gl = [
+        E("Misc", "other"),
+        E("Girls Day", "culture"),
+        E("Count Everett", "title"),
+        E("Okiku doll", "item"),
+    ]
+    sel = select_for_chapter(gl, "<p>Misc Girls Day Count Everett Okiku doll</p>", core_cast=0)
+    assert terms(sel) == ["Okiku doll", "Count Everett", "Girls Day", "Misc"]

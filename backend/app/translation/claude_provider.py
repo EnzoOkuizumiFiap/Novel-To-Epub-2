@@ -41,7 +41,7 @@ from app.translation.gemini_provider import (
     _glossary_section,
     _intro,
 )
-from app.translation.glossary import GlossaryEntry
+from app.translation.glossary import ENTRY_KINDS, GlossaryEntry
 from app.translation.openai_compatible_provider import OpenAICompatTranslationError
 from app.translation.provider import TranslationProvider, TranslationResult
 
@@ -74,10 +74,7 @@ _OUTPUT_SCHEMA: dict = {
                     "canonical_pt": {"type": "string"},
                     "kind": {
                         "type": "string",
-                        "enum": [
-                            "character", "place", "ability",
-                            "organization", "system_term", "other",
-                        ],
+                        "enum": list(ENTRY_KINDS),
                     },
                     "gender": {
                         "type": "string",

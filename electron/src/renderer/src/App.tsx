@@ -54,7 +54,7 @@ function App(): React.JSX.Element {
       <div className="flex h-screen min-h-screen">
         <Sidebar view={view} onNavigate={navigate} />
         <main className="relative flex-1 overflow-auto">
-          <div className="mx-auto max-w-3xl px-10 py-12">
+          <div className={`mx-auto px-10 py-12 ${view === 'glossary' ? 'max-w-5xl' : 'max-w-3xl'}`}>
             {view === 'about' && <About />}
             {view === 'new' && (
               <NewCapture

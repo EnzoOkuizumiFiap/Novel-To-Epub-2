@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from app.gemini_client import GeminiTimeoutError
 from app.logging_conf import get_logger
-from app.translation.glossary import GlossaryEntry
+from app.translation.glossary import EntryKind, GlossaryEntry
 from app.translation.provider import TranslationProvider, TranslationResult
 from app.translation.retry import call_with_retry
 
@@ -70,7 +70,7 @@ class _GlossaryDelta(BaseModel):
             "DEVE SER IGUAL ao term (preservar em inglês). Só traduza para substantivos comuns."
         )
     )
-    kind: Literal["character", "place", "ability", "organization", "system_term", "other"]
+    kind: EntryKind
     gender: Literal["male", "female", "non-binary", "unknown", "n/a"]
     notes: str = Field(default="", description="contexto curto: papel/descrição (1 frase)")
     confidence: Literal["high", "medium", "low"] = Field(
@@ -176,9 +176,15 @@ ESTILO:
 - Use gênero gramatical EXATAMENTE como indicado no glossário (male/female). Se Quinn é male, todas as referências em PT são masculinas: "ele", "cansado", "o jovem"."""
 
 _NEW_TERMS_AND_HTML = """NOVOS TERMOS:
-Adicione ao campo `new_glossary_entries` TODO nome próprio (qualquer coisa com inicial maiúscula que se refira a uma pessoa, lugar, habilidade, organização ou item nomeado) que NÃO está no glossário {where}:
+Adicione ao campo `new_glossary_entries` TODO nome próprio ou termo recorrente do mundo/cultura (pessoa, lugar, habilidade, organização, sistema, item/objeto/marca, título/cargo ou conceito cultural/ritual/lenda) que NÃO está no glossário {where}:
 - Para personagens: infira `gender` do contexto (pronomes "he/she/they", descrições); confidence="low" se ambíguo.
-- Para coisas (place/ability/organization/system_term): `gender="n/a"`.
+- Não crie entradas redundantes só de honorífico/tratamento (ex: "Lady Everett", "Miss Everett", "Louis-san") quando o personagem base já existir em `character`.
+- Para coisas (place/ability/organization/system_term/item/title/culture/other): `gender="n/a"`.
+  - Jornais, revistas, empresas e instituições → `organization`
+  - Objetos, artefatos, armas, bonecas, comidas/marcas → `item`
+  - Cargos, patentes, nobreza e epítetos → `title`
+  - Festivais, rituais, folclore, lendas, padrões, eventos e leis → `culture`
+  - Use `other` só em último caso.
 - `canonical_pt` = `term` (mantém em inglês, lembra da regra fundamental).
 - `notes`: 1 frase curta sobre o papel/contexto.
 

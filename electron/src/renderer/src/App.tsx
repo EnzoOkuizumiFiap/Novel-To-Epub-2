@@ -14,9 +14,12 @@ function App(): React.JSX.Element {
   // Default 'about' — primeira impressao do app. User navega pra 'new' depois.
   const [view, setView] = useState<View>('about')
   const [selectedNovelId, setSelectedNovelId] = useState<number | null>(null)
-  // Prefill da Nova captura: URL + estilo de capa travado da novel (pra "Capturar
-  // mais" manter a coleção sem depender do preview rodar).
-  const [prefill, setPrefill] = useState<{ url: string; coverStyle: string | null } | null>(null)
+  // Prefill da Nova captura: URL + estilo de capa travado da novel, ou novelId pra EPUB.
+  const [prefill, setPrefill] = useState<{
+    url?: string | null
+    coverStyle?: string | null
+    novelId?: number | null
+  } | null>(null)
   const [glossaryNovelId, setGlossaryNovelId] = useState<number | null>(null)
 
   function navigate(v: View): void {
@@ -30,7 +33,13 @@ function App(): React.JSX.Element {
   }
 
   function openCaptureWithUrl(url: string, coverStyle: string | null): void {
-    setPrefill({ url, coverStyle })
+    setPrefill({ url, coverStyle, novelId: null })
+    setSelectedNovelId(null)
+    setView('new')
+  }
+
+  function openImportEpubForNovel(novelId: number): void {
+    setPrefill({ url: null, coverStyle: null, novelId })
     setSelectedNovelId(null)
     setView('new')
   }
@@ -49,9 +58,10 @@ function App(): React.JSX.Element {
             {view === 'about' && <About />}
             {view === 'new' && (
               <NewCapture
+                key={prefill ? `${prefill.url ?? ''}:${prefill.novelId ?? ''}` : 'fresh'}
                 prefilledUrl={prefill?.url ?? null}
                 prefilledCoverStyle={prefill?.coverStyle ?? null}
-                onUsedPrefill={() => setPrefill(null)}
+                prefilledNovelId={prefill?.novelId ?? null}
               />
             )}
             {view === 'downloads' && <Downloads />}
@@ -64,6 +74,7 @@ function App(): React.JSX.Element {
                   novelId={selectedNovelId}
                   onBack={() => setSelectedNovelId(null)}
                   onCaptureMore={openCaptureWithUrl}
+                  onImportEpub={openImportEpubForNovel}
                   onOpenGlossary={openGlossaryFor}
                 />
               ) : (

@@ -16,12 +16,20 @@ const USD_TO_BRL = 5.0
 function fmtBrl(usd: number): string {
   const brl = usd * USD_TO_BRL
   return brl.toLocaleString('pt-BR', {
-    style: 'currency', currency: 'BRL', minimumFractionDigits: brl < 1 ? 4 : 2
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: brl < 1 ? 4 : 2
   })
 }
 
 function fmtUsd(usd: number): string {
   return `$${usd.toFixed(usd < 1 ? 4 : 2)}`
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return n.toLocaleString('pt-BR')
 }
 
 function fmtShortDate(iso: string): string {
@@ -32,11 +40,16 @@ function fmtShortDate(iso: string): string {
 function providerColor(name: string): string {
   // Cores tiradas das vars de book do design system pra ficar coerente
   switch (name) {
-    case 'groq': return 'var(--book-3)'        // verde
-    case 'openrouter': return 'var(--book-5)'  // roxo
-    case 'cerebras': return 'var(--book-2)'    // âmbar
-    case 'gemini': return 'var(--book-7)' // azul
-    default: return 'var(--ink-400)'
+    case 'claude':
+      return 'var(--book-3)' // verde
+    case 'openrouter':
+      return 'var(--book-5)' // roxo
+    case 'cerebras':
+      return 'var(--book-2)' // âmbar
+    case 'gemini':
+      return 'var(--book-7)' // azul
+    default:
+      return 'var(--ink-400)'
   }
 }
 
@@ -45,20 +58,27 @@ export function Usage(): React.JSX.Element {
   const [byDay, setByDay] = useState<UsageDay[] | null>(null)
   const [byNovel, setByNovel] = useState<UsageByNovel[] | null>(null)
   const [byProvider, setByProvider] = useState<UsageByProvider[] | null>(null)
+  const [chartMetric, setChartMetric] = useState<'tokens' | 'cost'>('cost')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    Promise.all([
-      api.usageSummary(), api.usageByDay(30), api.usageByNovel(), api.usageByProvider()
-    ])
+    Promise.all([api.usageSummary(), api.usageByDay(30), api.usageByNovel(), api.usageByProvider()])
       .then(([s, d, n, p]) => {
-        setSummary(s); setByDay(d); setByNovel(n); setByProvider(p)
+        setSummary(s)
+        setByDay(d)
+        setByNovel(n)
+        setByProvider(p)
+        if (s.total_usd === 0 && s.total_tokens > 0) setChartMetric('tokens')
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
   }, [])
 
-  const maxDay = useMemo(
+  const maxDayCost = useMemo(
     () => Math.max(0.0001, ...(byDay ?? []).map((d) => d.cost_usd)),
+    [byDay]
+  )
+  const maxDayTokens = useMemo(
+    () => Math.max(1, ...(byDay ?? []).map((d) => d.total_tokens)),
     [byDay]
   )
 
@@ -85,8 +105,9 @@ export function Usage(): React.JSX.Element {
           Custos
         </h2>
         <p className="font-sans max-w-md text-[15px] leading-relaxed text-[var(--ink-500)]">
-          Gastos com a API do Gemini — tradução de capítulos, capas e briefs.
-          Valores aproximados em real (taxa fixa USD {USD_TO_BRL.toFixed(2)}).
+          Consumo de tokens (inclusive modelos gratuitos) e gastos estimados nos providers
+          configurados — tradução de capítulos, capas e briefs (taxa fixa USD{' '}
+          {USD_TO_BRL.toFixed(2)}).
         </p>
       </header>
 
@@ -114,14 +135,61 @@ export function Usage(): React.JSX.Element {
         />
       </section>
 
+      {/* Consumo de tokens */}
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <StatCard
+          label="tokens consumidos (total)"
+          value={fmtTokens(summary.total_tokens)}
+          sub={`${summary.total_tokens.toLocaleString('pt-BR')} tokens · ${summary.total_ops} chamadas`}
+        />
+        <StatCard
+          label="tokens de entrada (prompt)"
+          value={fmtTokens(summary.total_input_tokens)}
+          sub={`${summary.total_input_tokens.toLocaleString('pt-BR')} tokens`}
+        />
+        <StatCard
+          label="tokens de saída (tradução)"
+          value={fmtTokens(summary.total_output_tokens)}
+          sub={`${summary.total_output_tokens.toLocaleString('pt-BR')} tokens · 7d: ${fmtTokens(summary.last_7d_tokens)}`}
+        />
+      </section>
+
       {/* Gráfico por dia */}
       <section className="space-y-3">
-        <h3 className="font-display flex items-baseline gap-3 text-lg font-medium tracking-tight">
-          Por dia
-          <span className="font-sans text-[11px] tracking-[0.16em] uppercase text-[var(--ink-400)]">
-            últimos 30 dias
-          </span>
-        </h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-display flex items-baseline gap-3 text-lg font-medium tracking-tight">
+            Por dia
+            <span className="font-sans text-[11px] tracking-[0.16em] uppercase text-[var(--ink-400)]">
+              últimos 30 dias
+            </span>
+          </h3>
+          <div className="flex rounded-lg border border-[var(--border-soft)] bg-[var(--paper-100)] p-0.5 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setChartMetric('tokens')}
+              className={[
+                'rounded-md px-2.5 py-1 font-sans transition-colors',
+                chartMetric === 'tokens'
+                  ? 'bg-[var(--ink-900)] text-[var(--paper-50)]'
+                  : 'text-[var(--ink-500)] hover:text-[var(--ink-900)]'
+              ].join(' ')}
+            >
+              Tokens
+            </button>
+            <button
+              type="button"
+              onClick={() => setChartMetric('cost')}
+              className={[
+                'rounded-md px-2.5 py-1 font-sans transition-colors',
+                chartMetric === 'cost'
+                  ? 'bg-[var(--ink-900)] text-[var(--paper-50)]'
+                  : 'text-[var(--ink-500)] hover:text-[var(--ink-900)]'
+              ].join(' ')}
+            >
+              Custo (R$)
+            </button>
+          </div>
+        </div>
         <div
           className={[
             'rounded-2xl border bg-[var(--paper-100)] px-6 py-5',
@@ -131,12 +199,14 @@ export function Usage(): React.JSX.Element {
         >
           <div className="flex h-40 items-end gap-1">
             {byDay.map((d) => {
-              const pct = (d.cost_usd / maxDay) * 100
-              const hasUse = d.cost_usd > 0
+              const val = chartMetric === 'tokens' ? d.total_tokens : d.cost_usd
+              const maxVal = chartMetric === 'tokens' ? maxDayTokens : maxDayCost
+              const pct = (val / maxVal) * 100
+              const hasUse = val > 0
               return (
                 <div
                   key={d.day}
-                  title={`${d.day} · ${fmtBrl(d.cost_usd)} · ${d.ops} chamadas`}
+                  title={`${d.day} · ${fmtBrl(d.cost_usd)} · ${d.total_tokens.toLocaleString('pt-BR')} tokens · ${d.ops} chamadas`}
                   className={[
                     'flex-1 rounded-t-sm transition-all hover:opacity-100',
                     hasUse
@@ -154,8 +224,17 @@ export function Usage(): React.JSX.Element {
             <span>{fmtShortDate(byDay[byDay.length - 1].day)}</span>
           </div>
           <div className="font-sans mt-2 flex justify-between text-[11px] text-[var(--ink-500)]">
-            <span>pico: {fmtBrl(maxDay)}/dia</span>
-            <span>total 30d: {fmtBrl(summary.last_30d_usd)}</span>
+            {chartMetric === 'tokens' ? (
+              <>
+                <span>pico: {fmtTokens(maxDayTokens)} tokens/dia</span>
+                <span>total 30d: {summary.last_30d_tokens.toLocaleString('pt-BR')} tokens</span>
+              </>
+            ) : (
+              <>
+                <span>pico: {fmtBrl(maxDayCost)}/dia</span>
+                <span>total 30d: {fmtBrl(summary.last_30d_usd)}</span>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -199,7 +278,8 @@ export function Usage(): React.JSX.Element {
                       )}
                     </span>
                     <span className="font-sans text-[11px] text-[var(--ink-500)]">
-                      {p.ops} {p.ops === 1 ? 'chamada' : 'chamadas'}
+                      {fmtTokens(p.total_tokens)} tokens · {p.ops}{' '}
+                      {p.ops === 1 ? 'chamada' : 'chamadas'}
                     </span>
                     <span className="font-display w-24 text-right text-[14px] italic text-[var(--ink-900)]">
                       {fmtBrl(p.total_usd)}
@@ -236,7 +316,8 @@ export function Usage(): React.JSX.Element {
                     {n.novel_title}
                   </div>
                   <div className="font-sans text-[11px] tracking-wide text-[var(--ink-500)]">
-                    {n.chapters_translated} caps traduzidos · {n.covers_generated} capa(s) · {n.ops} chamadas
+                    {n.chapters_translated} caps traduzidos · {n.covers_generated} capa(s) ·{' '}
+                    {fmtTokens(n.total_tokens)} tokens · {n.ops} chamadas
                   </div>
                 </div>
                 <div className="text-right">
@@ -257,8 +338,14 @@ export function Usage(): React.JSX.Element {
 }
 
 function StatCard({
-  label, value, sub
-}: { label: string; value: string; sub?: string }): React.JSX.Element {
+  label,
+  value,
+  sub
+}: {
+  label: string
+  value: string
+  sub?: string
+}): React.JSX.Element {
   return (
     <div
       className={[
@@ -274,9 +361,7 @@ function StatCard({
         {value}
       </div>
       {sub && (
-        <div className="font-sans mt-1 text-[11px] tracking-wide text-[var(--ink-500)]">
-          {sub}
-        </div>
+        <div className="font-sans mt-1 text-[11px] tracking-wide text-[var(--ink-500)]">{sub}</div>
       )}
     </div>
   )

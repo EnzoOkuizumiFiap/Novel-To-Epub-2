@@ -327,7 +327,7 @@ export function PersistedVolumeRow({
                 )}
                 Recompilar
               </Button>
-              {untranslated && (
+              {untranslated ? (
                 <Button size="sm" onClick={translateVolume} disabled={translatingNow}>
                   {translatingNow ? (
                     <Loader2 className="size-3.5 animate-spin" />
@@ -335,6 +335,15 @@ export function PersistedVolumeRow({
                     <Languages className="size-3.5" />
                   )}
                   Traduzir
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onOpenEditor(vol)}
+                  title="Revisar ou corrigir traduções manualmente"
+                >
+                  <FileEdit className="size-3.5" /> Editar caps
                 </Button>
               )}
               <div className="relative">

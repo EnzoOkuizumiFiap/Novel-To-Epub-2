@@ -196,13 +196,20 @@ async def rebuild_volume_epub(volume_id: int) -> Path:
             cover_bytes, _ = cached_cover
         else:
             log.warning("rebuild_ai_cover_missing", volume_id=volume_id)
-    if cover_bytes is None and vol["with_cover"] and meta.cover_url:
-        # Fallback: re-baixa raspada (1 request HTTP, sem token Gemini)
-        try:
-            async with HttpClient() as client:
-                cover_bytes = await client.get_bytes(meta.cover_url)
-        except Exception as exc:
-            log.warning("rebuild_cover_fetch_failed", error=str(exc))
+    if cover_bytes is None and vol["with_cover"]:
+        if novel_dict["source"] == "epub":
+            from app.epub.reader import load_local_epub_cover
+
+            local_cover = load_local_epub_cover(novel_id, vol["volume_title"])
+            if local_cover is not None:
+                cover_bytes, _ = local_cover
+        elif meta.cover_url:
+            # Fallback: re-baixa raspada (1 request HTTP, sem token Gemini)
+            try:
+                async with HttpClient() as client:
+                    cover_bytes = await client.get_bytes(meta.cover_url)
+            except Exception as exc:
+                log.warning("rebuild_cover_fetch_failed", error=str(exc))
 
     # ---- Build ----
     out_path = Path(vol["output_path"])

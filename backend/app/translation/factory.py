@@ -28,27 +28,24 @@ class TranslationConfigError(RuntimeError):
 # Modelos default por provider (modelo "principal" de cada).
 # Usuario pode sobrescrever via settings.<provider>_model (futuro).
 DEFAULT_MODELS: dict[str, str] = {
-    # Groq: Llama 3.3 70B production confirmado (280 tok/s, 131k ctx)
-    "groq": "llama-3.3-70b-versatile",
-    # OpenRouter: Llama 3.3 70B free — qwen-2.5-72b-instruct:free virou "No
-    # endpoints found" (provider parou de hostar gratis); Llama 3.3 70B tem
-    # endpoints estáveis e qualidade equivalente pra tradução PT-BR.
-    "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+    # OpenRouter: Nemotron 3 Ultra 550B free (1M ctx, suporte oficial PT-BR, disponível sem 429)
+    "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
     # Cerebras: llama-3.3-70b foi DECOMISSIONADO; gpt-oss-120b é o substituto
     # oficial recomendado por eles (https://inference-docs.cerebras.ai/support/deprecation)
     "cerebras": "gpt-oss-120b",
-    "gemini": "gemini-2.5-flash",
+    "gemini": "gemini-3.5-flash-lite",
     # Claude (API da Anthropic, pago por token — ver translation/pricing.py)
     "claude": CLAUDE_DEFAULT_MODEL,
 }
 
 # Todos os providers conhecidos. Um provider novo que ainda nao esta no
 # cascade_order salvo entra no FIM — so vira fallback ate o usuario reordenar.
-KNOWN_PROVIDERS = ["groq", "openrouter", "cerebras", "gemini", "claude"]
+KNOWN_PROVIDERS = ["openrouter", "cerebras", "gemini", "claude"]
 
 
 def with_known_providers(order: list[str]) -> list[str]:
-    return order + [p for p in KNOWN_PROVIDERS if p not in order]
+    cleaned = [p for p in order if p in KNOWN_PROVIDERS]
+    return cleaned + [p for p in KNOWN_PROVIDERS if p not in cleaned]
 
 
 def _read_keys(cfg: dict) -> dict[str, str | None]:
@@ -59,7 +56,6 @@ def _read_keys(cfg: dict) -> dict[str, str | None]:
             or os.environ.get("GOOGLE_API_KEY")
             or cfg.get("gemini_api_key")
         ),
-        "groq": os.environ.get("GROQ_API_KEY") or cfg.get("groq_api_key"),
         "openrouter": (
             os.environ.get("OPENROUTER_API_KEY") or cfg.get("openrouter_api_key")
         ),
@@ -71,12 +67,13 @@ def _read_keys(cfg: dict) -> dict[str, str | None]:
 # Modelo pro qual o Gemini ESCALA quando o primário (Flash) bate guardrail de
 # conteúdo. Pro às vezes passa onde o Flash bloqueia. Se o usuário já escolheu o
 # Pro como principal, não há pra onde escalar (_gemini_escalation devolve None).
-_GEMINI_ESCALATION_MODEL = "gemini-2.5-pro"
+_GEMINI_ESCALATION_MODEL = "gemini-4-neon"
 
 
 def _gemini_escalation(primary_model: str) -> str | None:
-    """Pro como fallback de bloqueio — exceto se o primário já for um Pro."""
-    if "pro" in primary_model.lower():
+    """Modelo intermediário como fallback de bloqueio — exceto se o primário já for topo de linha."""
+    low = primary_model.lower()
+    if any(tok in low for tok in ("carbon", "neon", "pro")):
         return None
     return _GEMINI_ESCALATION_MODEL
 
@@ -118,7 +115,7 @@ def build_translator(
         order = list(raw_order)
     else:
         # Default: free primeiro, paid último
-        order = ["groq", "openrouter", "cerebras", "gemini"]
+        order = ["openrouter", "cerebras", "gemini", "claude"]
     order = with_known_providers(order)
 
     providers: list[TranslationProvider] = []
@@ -157,7 +154,7 @@ def build_translator(
     if not providers:
         raise TranslationConfigError(
             "nenhum provider configurado — adicione pelo menos 1 API key em /api/settings "
-            f"(Groq/OpenRouter/Cerebras/Gemini/Claude). Skipped: {skipped}"
+            f"(OpenRouter/Cerebras/Gemini/Claude). Skipped: {skipped}"
         )
 
     log.info(

@@ -26,9 +26,9 @@ class BaseAdapter(ABC):
     de EPUB ficam fora do adapter.
     """
 
-    #: nome curto/identificador (ex: "novelbin")
+    #: nome curto/identificador (ex: "novelfull")
     name: str = ""
-    #: dominios que este adapter atende (ex: ["novelbin.com"])
+    #: dominios que este adapter atende (ex: ["novelfull.net"])
     domains: list[str] = []
     #: False = adapter fica fora do registry (nao casa URL, nao aparece na UI).
     #: Usado quando o site sai do ar / troca de dominio: o parsing continua

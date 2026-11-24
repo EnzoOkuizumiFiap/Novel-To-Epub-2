@@ -57,7 +57,7 @@ _MODELS_WITH_FALLBACK = ("claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"
 # Teto por chamada (stream inteiro). Capitulo longo + glossario + raciocinio
 # adaptativo cabe com folga; acima disso o cascade segue pro proximo provider.
 _TIMEOUT_S = 300.0
-_MAX_TOKENS = 32000
+_MAX_TOKENS = 64000
 
 # JSON Schema estrito da resposta (espelha _TranslationOutput/_GlossaryDelta).
 _OUTPUT_SCHEMA: dict = {

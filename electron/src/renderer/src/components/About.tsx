@@ -1,4 +1,13 @@
-import { BookOpen, Languages, Sparkles, Send, ScrollText, Heart } from 'lucide-react'
+import {
+  Activity,
+  BookOpen,
+  Languages,
+  RefreshCw,
+  Sparkles,
+  Send,
+  ScrollText,
+  Heart
+} from 'lucide-react'
 
 // GitHub mark — esta versao do lucide-react nao exporta um icon GitHub,
 // entao inline o SVG oficial (MIT, github/octicons) pra manter consistencia.
@@ -31,21 +40,33 @@ interface Feature {
 const FEATURES: Feature[] = [
   {
     icon: BookOpen,
-    title: 'Multi-site',
-    text: 'NovelBin, NovelMania e mais via adapters plugáveis. Adicionar site novo é criar um arquivo.',
+    title: 'Web + EPUB local',
+    text: 'Capture de sites (NovelFull, NovelMania, Royal Road, CSNovels, WuxiaWorldEU) ou importe .epub locais agrupando volumes na mesma série.',
     color: 'var(--book-1)'
   },
   {
     icon: Languages,
-    title: 'Tradução cascade',
-    text: 'Groq → OpenRouter → Cerebras → Gemini, com fallback automático. Glossário mantém nomes consistentes.',
+    title: 'Tradução em cascata',
+    text: 'OpenRouter (:free com trava anti-cobrança), Cerebras, Gemini 4 / 3.x e Claude com fallback, pin por volume, glossário e perfil de estilo.',
     color: 'var(--book-4)'
+  },
+  {
+    icon: RefreshCw,
+    title: 'Pausar e continuar',
+    text: 'Capítulos longos de EPUB usam limites por provider, contexto contínuo de cena e cache parcial por parte para retomar do ponto exato.',
+    color: 'var(--book-3)'
   },
   {
     icon: Sparkles,
     title: 'Capa por IA',
-    text: 'Brief visual derivado dos primeiros capítulos + tipografia editorial sobreposta via Pillow.',
+    text: 'Brief visual derivado dos primeiros capítulos (Gemini ou Claude) + tipografia editorial e galeria de wallpapers.',
     color: 'var(--book-5)'
+  },
+  {
+    icon: Activity,
+    title: 'Custos & tokens',
+    text: 'Acompanhe gastos em R$/USD e consumo de tokens (entrada/saída) por dia, provider e novel — inclusive nos tiers gratuitos.',
+    color: 'var(--book-6)'
   },
   {
     icon: Send,
@@ -93,14 +114,14 @@ export function About(): React.JSX.Element {
             <Folio n="i" />
             <Logo size="lg" />
             <p className="font-display max-w-md text-[18px] leading-snug text-[var(--ink-700)]">
-              Web novels viram{' '}
-              <em className="italic text-[var(--stamp-red)]">livros de verdade</em> —
-              tradução, capa e Kindle, num clique.
+              Web novels e EPUBs viram{' '}
+              <em className="italic text-[var(--stamp-red)]">livros de verdade</em> — tradução, capa
+              e Kindle, num clique.
             </p>
             <p className="font-sans max-w-md text-[13px] leading-relaxed text-[var(--ink-500)]">
-              Cole a URL de uma novel, escolha o intervalo, e o app baixa, traduz
-              (opcional), gera capa e monta um EPUB pronto pro leitor. Cache em SQLite
-              garante zero re-trabalho.
+              Cole a URL de uma novel ou importe um arquivo .epub local: o app traduz com memória de
+              glossário e estilo, gera capa e monta o EPUB final. Tudo salvo em SQLite para pausar,
+              retomar e regerar sem re-trabalho.
             </p>
           </div>
           <div className="relative shrink-0">
@@ -114,12 +135,12 @@ export function About(): React.JSX.Element {
         </div>
       </header>
 
-      {/* FEATURES — grid 2x2 */}
+      {/* FEATURES — grid responsivo */}
       <section className="space-y-4">
         <h3 className="font-display text-[13px] font-semibold tracking-[0.18em] text-[var(--ink-400)] uppercase">
           O que faz
         </h3>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {FEATURES.map((f) => (
             <Card key={f.title} className="flex gap-3 p-4">
               <div
@@ -171,9 +192,9 @@ export function About(): React.JSX.Element {
               <ExternalLink href={AUTHOR_URL} className="inline">
                 @LucasrsRodrigues
               </ExternalLink>{' '}
-              com <Heart className="inline size-3 text-[var(--stamp-red)]" /> e muito Gemini
-              free tier. PRs com novos adapters são a contribuição mais valiosa — o tutorial
-              tá no README do repo.
+              com <Heart className="inline size-3 text-[var(--stamp-red)]" /> e muito Gemini free
+              tier. PRs com novos adapters são a contribuição mais valiosa — o tutorial tá no README
+              do repo.
             </p>
           </div>
         </Card>
@@ -183,10 +204,10 @@ export function About(): React.JSX.Element {
       <section className="space-y-3">
         <Card className="border-dashed bg-[var(--paper-50)] p-4">
           <p className="font-sans text-[11px] leading-relaxed text-[var(--ink-500)]">
-            <strong className="font-medium text-[var(--ink-700)]">Uso pessoal.</strong>{' '}
-            Este app é uma ferramenta de leitura offline. Respeite o copyright dos autores e
-            os Termos de Uso dos sites de origem — não redistribua os EPUBs gerados. Apoiar o
-            autor (quando possível) é o caminho ético.
+            <strong className="font-medium text-[var(--ink-700)]">Uso pessoal.</strong> Este app é
+            uma ferramenta de leitura offline. Respeite o copyright dos autores e os Termos de Uso
+            dos sites de origem — não redistribua os EPUBs gerados. Apoiar o autor (quando possível)
+            é o caminho ético.
           </p>
         </Card>
       </section>
@@ -195,8 +216,7 @@ export function About(): React.JSX.Element {
       <footer className="border-t border-[var(--border-soft)] pt-6">
         <div className="flex flex-wrap items-baseline justify-between gap-4">
           <p className="font-sans text-[11px] tracking-wide text-[var(--ink-400)]">
-            <span className="folio">v{__APP_VERSION__}</span> · MIT License · © 2026
-            Lucas Rodrigues
+            <span className="folio">v{__APP_VERSION__}</span> · MIT License · © 2026 Lucas Rodrigues
           </p>
           <p className="font-sans text-[11px] tracking-wide text-[var(--ink-400)]">
             Construído com FastAPI · Electron · React · ebooklib

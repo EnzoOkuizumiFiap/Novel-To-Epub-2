@@ -111,6 +111,20 @@ def _strip_html(html: str) -> str:
     return re.sub(r"\n\s*\n", "\n\n", text).strip()
 
 
+def extract_anchor_from_html(
+    html: str, *, max_paragraphs: int = 3, max_chars: int = 900
+) -> str | None:
+    """Extrai últimos N parágrafos de um HTML traduzido como amostra de estilo."""
+    text = _strip_html(html)
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    if not paragraphs:
+        return None
+    sample = "\n\n".join(paragraphs[-max_paragraphs:])
+    if len(sample) > max_chars:
+        sample = "…" + sample[-max_chars:]
+    return sample
+
+
 def fetch_style_anchor(
     *,
     novel_id: int,
@@ -134,23 +148,25 @@ def fetch_style_anchor(
         if got is None:
             continue
         html, _title = got
-        text = _strip_html(html)
-        # Últimos N parágrafos não vazios
-        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-        if not paragraphs:
-            continue
-        sample = "\n\n".join(paragraphs[-max_paragraphs:])
-        if len(sample) > max_chars:
-            sample = "…" + sample[-max_chars:]
-        return sample
+        sample = extract_anchor_from_html(
+            html, max_paragraphs=max_paragraphs, max_chars=max_chars
+        )
+        if sample:
+            return sample
     return None
 
 
-def build_anchor_block(sample: str | None) -> str:
+def build_anchor_block(sample: str | None, *, is_continuation: bool = False) -> str:
     if not sample:
         return ""
+    header = (
+        "CONTEXTO IMEDIATO DO MESMO CAPÍTULO (trecho já traduzido logo antes desta parte — "
+        "NÃO retraduza; use para manter continuidade da cena, pronomes, tom e ritmo):"
+        if is_continuation
+        else "ÂNCORA DE ESTILO (amostra REAL do cap anterior — continue EXATAMENTE neste tom, ritmo e escolha de palavras):"
+    )
     return f"""
-ÂNCORA DE ESTILO (amostra REAL do cap anterior — continue EXATAMENTE neste tom, ritmo e escolha de palavras):
+{header}
 ─────
 {sample}
 ─────

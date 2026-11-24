@@ -17,17 +17,19 @@ log = get_logger("pricing")
 # Chaves aceitam tanto o modelo "puro" quanto com prefix "provider/modelo".
 _TEXT_PRICES: dict[str, tuple[float, float]] = {
     # Gemini (Google)
-    "gemini-2.5-flash": (0.30, 2.50),
-    "gemini-2.5-flash-lite": (0.10, 0.40),
-    "gemini-2.5-pro": (1.25, 10.00),  # ≤200k tokens; >200k usa 2.50/15.00
-    # Groq (free tier disponível pra todos esses)
-    "llama-3.3-70b-versatile": (0.0, 0.0),
-    "llama-3.1-70b-versatile": (0.0, 0.0),
-    "llama-3.1-8b-instant": (0.0, 0.0),
+    "gemini-4-hydrogen": (1.50, 7.50),
+    "gemini-4-neon": (3.00, 15.00),
+    "gemini-4-carbon": (4.00, 20.00),  # intro $2.00/$10.00 até 30/11/2026
+    "gemini-3.8-flash": (0.75, 3.75),
+    "gemini-3.5-flash-lite": (0.30, 2.50),
     # OpenRouter free models (sufixo :free)
-    "qwen/qwen-2.5-72b-instruct:free": (0.0, 0.0),
-    "meta-llama/llama-3.3-70b-instruct:free": (0.0, 0.0),
-    "google/gemini-2.0-flash-exp:free": (0.0, 0.0),
+    "google/gemma-4-31b-it:free": (0.0, 0.0),
+    "google/gemma-4-26b-a4b-it:free": (0.0, 0.0),
+    "nvidia/nemotron-3-ultra-550b-a55b:free": (0.0, 0.0),
+    "nvidia/nemotron-3.5-super-vl:free": (0.0, 0.0),
+    "baidu/ernie-5.5-flash-preview:free": (0.0, 0.0),
+    "inclusionai/ling-3.2-flash:free": (0.0, 0.0),
+    "openrouter/free": (0.0, 0.0),
     # Claude (Anthropic, API 1st-party; USD por 1M tokens). Cache: leitura ~0,1x e
     # escrita ~1,25x do input — o dashboard conta tudo como input normal, entao
     # o custo exibido fica um pouco ACIMA do real quando o cache acerta.
@@ -38,8 +40,7 @@ _TEXT_PRICES: dict[str, tuple[float, float]] = {
     "claude-opus-5": (5.00, 25.00),
     "claude-sonnet-5": (2.00, 10.00),
     # Cerebras (free generoso)
-    "llama-3.3-70b": (0.0, 0.0),
-    "llama3.1-70b": (0.0, 0.0),
+    "gpt-oss-120b": (0.0, 0.0),
 }
 
 # Modelos cobrados por imagem gerada (token count e irrelevante)
@@ -63,8 +64,12 @@ def calculate_cost(
             log.warning("pricing_unknown_image_model", model=model)
             return 0.0
         return price
+    # Modelos ':free' (ex: OpenRouter) sao sempre gratuitos
+    norm = _normalize_model(model)
+    if model.endswith(":free") or norm in ("openrouter/free", "free"):
+        return 0.0
     # Tenta exato (com prefix) primeiro, depois normalizado
-    prices = _TEXT_PRICES.get(model) or _TEXT_PRICES.get(_normalize_model(model))
+    prices = _TEXT_PRICES.get(model) or _TEXT_PRICES.get(norm)
     if prices is None:
         log.warning("pricing_unknown_text_model", model=model)
         return 0.0

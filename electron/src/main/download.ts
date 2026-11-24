@@ -4,7 +4,7 @@ import { Readable, Transform } from 'stream'
 import { pipeline } from 'stream/promises'
 import type { ReadableStream as WebReadableStream } from 'stream/web'
 
-export type DownloadResult = { filePath?: string; bytes?: number; error?: string }
+type DownloadResult = { filePath?: string; bytes?: number; error?: string }
 
 /**
  * Baixa `url` pra `filePath` via stream (sem segurar o arquivo na memória).

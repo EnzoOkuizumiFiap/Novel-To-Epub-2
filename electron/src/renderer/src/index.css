@@ -147,7 +147,11 @@
 
   }
 
-  a {
+  a,
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  summary,
+  select:not(:disabled) {
     @apply cursor-pointer!;
   }
 
@@ -294,4 +298,19 @@
 
 *::-webkit-scrollbar-thumb:hover {
   background: var(--ink-300);
+}
+
+/* Textarea auto-expansível (ChapterEditor modo parágrafo a parágrafo) */
+.auto-grow-textarea {
+  field-sizing: content;
+  width: 100%;
+  height: auto;
+  min-block-size: 2lh;
+  max-block-size: 24lh;
+}
+
+/* Defer layout/paint apenas em linhas fora da dobra inicial (>= 15) */
+.deferred-paragraph-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto none auto 72px;
 }

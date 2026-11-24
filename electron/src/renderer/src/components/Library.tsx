@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { BookOpen, RefreshCw } from 'lucide-react'
-import { api, type NovelSummary } from '@renderer/lib/api'
+import { api, resolveMediaUrl, type NovelSummary } from '@renderer/lib/api'
 import { Button } from '@renderer/components/ui/button'
 import { Folio } from '@renderer/components/decorative/Folio'
 import { Ribbon } from '@renderer/components/decorative/Ribbon'
@@ -24,6 +24,8 @@ function NovelCard({
   ribbonColor: string
   onClick: () => void
 }): React.JSX.Element {
+  const [coverFailed, setCoverFailed] = useState(false)
+  const coverSrc = resolveMediaUrl(novel.cover_url)
   return (
     <button
       type="button"
@@ -38,10 +40,11 @@ function NovelCard({
     >
       {/* Cover with ribbon */}
       <div className="relative shrink-0">
-        {novel.cover_url ? (
+        {coverSrc && !coverFailed ? (
           <img
-            src={novel.cover_url}
+            src={coverSrc}
             alt={novel.title}
+            onError={() => setCoverFailed(true)}
             className="h-32 w-22 rounded-md object-cover shadow-[0_2px_8px_rgba(80,50,20,0.25),0_1px_2px_rgba(80,50,20,0.15)]"
             style={{ width: 88 }}
           />
@@ -54,12 +57,7 @@ function NovelCard({
           </div>
         )}
         {/* hanging bookmark ribbon */}
-        <Ribbon
-          color={ribbonColor}
-          width={14}
-          height={26}
-          className="absolute -top-1 right-2"
-        />
+        <Ribbon color={ribbonColor} width={14} height={26} className="absolute -top-1 right-2" />
       </div>
 
       {/* Info */}
@@ -74,7 +72,8 @@ function NovelCard({
           <span className="font-display text-[28px] leading-none font-medium italic text-[var(--ink-900)]">
             {novel.chapters}
             <span className="font-sans text-[10px] not-italic font-medium tracking-[0.18em] uppercase text-[var(--ink-400)]">
-              {' '}cap
+              {' '}
+              cap
             </span>
           </span>
           <span className="font-sans text-[10px] tracking-[0.16em] uppercase text-[var(--ink-400)]">
@@ -102,7 +101,16 @@ export function Library({
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
   }
 
-  useEffect(load, [])
+  useEffect(() => {
+    let active = true
+    api
+      .library()
+      .then((list) => active && setNovels(list))
+      .catch((err) => active && setError(err instanceof Error ? err.message : String(err)))
+    return () => {
+      active = false
+    }
+  }, [])
 
   const count = novels?.length ?? 0
 
@@ -114,8 +122,8 @@ export function Library({
           Biblioteca
         </h2>
         <p className="font-sans max-w-md text-[15px] leading-relaxed text-[var(--ink-500)]">
-          Suas novels em cache local. Cada uma com seu universo de personagens
-          e termos — visite o <em className="font-display italic">Glossário</em> pra revisar.
+          Suas novels em cache local. Cada uma com seu universo de personagens e termos — visite o{' '}
+          <em className="font-display italic">Glossário</em> pra revisar.
         </p>
       </header>
 
@@ -138,8 +146,8 @@ export function Library({
             Cada livro um <em className="italic">mundo</em> — guardados em paz.
           </h3>
           <p className="font-sans text-[13px] leading-relaxed text-[var(--ink-500)]">
-            Capítulos baixados e traduções ficam em cache local. Re-gerar o EPUB
-            não consome nenhuma rede nem nenhum token.
+            Capítulos baixados, EPUBs importados, partes já traduzidas e glossário ficam em cache
+            local. Pausar e continuar ou re-gerar o EPUB não refaz o que já foi concluído.
           </p>
           <div className="pt-2">
             <Button variant="outline" size="sm" onClick={load}>
@@ -149,9 +157,7 @@ export function Library({
         </div>
       </section>
 
-      {error && (
-        <p className="font-sans text-sm text-[var(--ink-stamp)]">{error}</p>
-      )}
+      {error && <p className="font-sans text-sm text-[var(--ink-stamp)]">{error}</p>}
 
       {novels && novels.length === 0 && (
         <div className="py-16 text-center">

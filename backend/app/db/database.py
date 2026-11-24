@@ -13,6 +13,7 @@ from app.config import settings
 from app.db.models import Base
 
 _engine: Engine | None = None
+_initialized_engine: Engine | None = None
 _SessionFactory: sessionmaker[Session] | None = None
 
 
@@ -33,9 +34,13 @@ def get_engine() -> Engine:
 
 def init_db() -> None:
     """Cria as tabelas se nao existirem + migra colunas novas (idempotente)."""
+    global _initialized_engine
     engine = get_engine()
+    if _initialized_engine is engine:
+        return
     Base.metadata.create_all(engine)
     _migrate(engine)
+    _initialized_engine = engine
 
 
 # ALTER TABLE ADD COLUMN para tabelas que ja existem (create_all so cria tabelas novas).
@@ -43,7 +48,7 @@ def init_db() -> None:
 _PENDING_COLUMNS: list[tuple[str, str, str]] = [
     ("app_settings", "gemini_api_key", "TEXT"),
     ("app_settings", "target_language", "VARCHAR(10) DEFAULT 'pt-BR'"),
-    ("app_settings", "translation_model", "VARCHAR(50) DEFAULT 'gemini-2.5-flash'"),
+    ("app_settings", "translation_model", "VARCHAR(50) DEFAULT 'gemini-3.5-flash-lite'"),
     ("novels", "wiki_url", "TEXT"),
     ("novels", "wiki_status", "VARCHAR(20) DEFAULT 'unknown'"),
     ("novels", "default_cover_style", "VARCHAR(60)"),
@@ -59,17 +64,15 @@ _PENDING_COLUMNS: list[tuple[str, str, str]] = [
     # Capitulos ignorados por volume (CSV de indices) — pula cap-lixo inicial.
     ("generated_volumes", "skip_chapters", "VARCHAR(500) DEFAULT ''"),
     # Cascade providers (mai 2026)
-    ("app_settings", "groq_api_key", "TEXT"),
     ("app_settings", "openrouter_api_key", "TEXT"),
     ("app_settings", "cerebras_api_key", "TEXT"),
-    ("app_settings", "cascade_order", "VARCHAR(200) DEFAULT 'groq,openrouter,cerebras,gemini'"),
+    ("app_settings", "cascade_order", "VARCHAR(200) DEFAULT 'openrouter,cerebras,gemini,claude'"),
     ("app_settings", "cover_styles_enabled", "VARCHAR(500) DEFAULT ''"),
     # Provider tracking pra breakdown no dashboard
     ("gemini_usage", "provider", "VARCHAR(40)"),
     # Erro humano-legivel quando provider falha no cascade
     ("gemini_usage", "error_message", "TEXT"),
     # Model overrides por provider
-    ("app_settings", "groq_model", "VARCHAR(120)"),
     ("app_settings", "openrouter_model", "VARCHAR(120)"),
     ("app_settings", "cerebras_model", "VARCHAR(120)"),
     # Claude (API da Anthropic)

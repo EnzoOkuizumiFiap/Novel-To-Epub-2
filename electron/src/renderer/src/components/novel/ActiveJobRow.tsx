@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Loader2, RefreshCw, Trash2 } from 'lucide-react'
 import { api, type JobStatus } from '@renderer/lib/api'
+import { jobProgressPct } from '@renderer/lib/jobsMerge'
 import { Button } from '@renderer/components/ui/button'
 
 export function ActiveJobRow({ job }: { job: JobStatus }): React.JSX.Element {
-  const pct = job.total ? Math.round((job.done / job.total) * 100) : 0
+  const pct = jobProgressPct(job)
   const [resuming, setResuming] = useState(false)
   const [discarding, setDiscarding] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -17,7 +18,7 @@ export function ActiveJobRow({ job }: { job: JobStatus }): React.JSX.Element {
     job.status === 'error'
       ? 'erro'
       : job.status === 'cancelled'
-        ? 'cancelado'
+        ? 'pausado'
         : job.status === 'interrupted'
           ? 'interrompido'
           : job.status === 'queued'
@@ -74,7 +75,7 @@ export function ActiveJobRow({ job }: { job: JobStatus }): React.JSX.Element {
             ) : (
               <RefreshCw className="size-3.5" />
             )}
-            Continuar captura
+            {job.translate_to ? 'Continuar tradução' : 'Continuar captura'}
           </Button>
           <Button
             variant="ghost"

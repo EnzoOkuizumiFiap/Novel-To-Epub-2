@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Activity,
   ArrowDown,
@@ -22,6 +22,16 @@ import { Label } from '@renderer/components/ui/label'
 import { Checkbox } from '@renderer/components/ui/checkbox'
 import { Card } from '@renderer/components/ui/card'
 import { Folio } from '@renderer/components/decorative/Folio'
+
+const GEMINI_MODELS = [
+  { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen (free tier · rápido)' },
+  { id: 'gemini-4-neon', label: 'Gemini 4 Neon (equilibrado)' },
+  { id: 'gemini-4-carbon', label: 'Gemini 4 Carbon (fronteira · máxima qualidade)' },
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash (rápido · econômico)' },
+  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash Lite (padrão · mais econômico)' }
+] as const
+
+const VALID_GEMINI_MODELS = new Set<string>(GEMINI_MODELS.map((m) => m.id))
 
 function SectionHeader({
   icon: Icon,
@@ -63,12 +73,9 @@ export function Settings(): React.JSX.Element {
   const [geminiKey, setGeminiKey] = useState('')
   const [geminiKeySet, setGeminiKeySet] = useState(false)
   const [targetLang, setTargetLang] = useState('pt-BR')
-  const [model, setModel] = useState('gemini-2.5-flash')
+  const [model, setModel] = useState('gemini-3.5-flash-lite')
 
   // Cascade providers
-  const [groqKey, setGroqKey] = useState('')
-  const [groqKeySet, setGroqKeySet] = useState(false)
-  const [groqModel, setGroqModel] = useState('')
   const [openrouterKey, setOpenrouterKey] = useState('')
   const [openrouterKeySet, setOpenrouterKeySet] = useState(false)
   const [openrouterModel, setOpenrouterModel] = useState('')
@@ -79,17 +86,18 @@ export function Settings(): React.JSX.Element {
   const [claudeKeySet, setClaudeKeySet] = useState(false)
   const [claudeModel, setClaudeModel] = useState('')
   const [defaultModels, setDefaultModels] = useState<Record<string, string>>({
-    groq: 'llama-3.3-70b-versatile',
-    openrouter: 'qwen/qwen-2.5-72b-instruct:free',
+    openrouter: 'nvidia/nemotron-3-ultra-550b-a55b:free',
     cerebras: 'gpt-oss-120b',
     claude: 'claude-opus-5-5',
-    gemini: 'gemini-2.5-flash'
+    gemini: 'gemini-3.5-flash-lite'
   })
+  const [openrouterModelErr, setOpenrouterModelErr] = useState<string | null>(null)
+  const openrouterModelRef = useRef<HTMLInputElement | null>(null)
   const [cascadeOrder, setCascadeOrder] = useState<string[]>([
-    'groq',
     'openrouter',
     'cerebras',
-    'gemini'
+    'gemini',
+    'claude'
   ])
   // Estilos de capa habilitados no dropdown (ids). Vazio = capa sempre automática.
   const [coverStyles, setCoverStyles] = useState<string[]>([])
@@ -121,14 +129,16 @@ export function Settings(): React.JSX.Element {
         setPwSet(cfg.smtp_password_set)
         setGeminiKeySet(cfg.gemini_api_key_set)
         setTargetLang(cfg.target_language)
-        setModel(cfg.translation_model)
-        setGroqKeySet(cfg.groq_api_key_set)
+        setModel(
+          VALID_GEMINI_MODELS.has(cfg.translation_model)
+            ? cfg.translation_model
+            : 'gemini-3.5-flash-lite'
+        )
         setOpenrouterKeySet(cfg.openrouter_api_key_set)
         setCerebrasKeySet(cfg.cerebras_api_key_set)
         setClaudeKeySet(cfg.claude_api_key_set)
         setClaudeModel(cfg.claude_model ?? '')
         setCoverBriefProvider(cfg.cover_brief_provider ?? 'gemini')
-        setGroqModel(cfg.groq_model ?? '')
         setOpenrouterModel(cfg.openrouter_model ?? '')
         setCerebrasModel(cfg.cerebras_model ?? '')
         if (cfg.default_models) setDefaultModels(cfg.default_models)
@@ -145,8 +155,21 @@ export function Settings(): React.JSX.Element {
       .finally(() => setLoading(false))
   }, [])
 
-  async function onSubmit(e: React.FormEvent): Promise<void> {
+  function validateOpenrouterModel(raw: string): string | null {
+    const m = raw.trim()
+    if (!m) return null
+    if (m === 'openrouter/free' || m.endsWith(':free')) return null
+    return 'OpenRouter só permite modelos gratuitos (terminados em ":free" ou "openrouter/free").'
+  }
+
+  async function onSubmit(e: React.SubmitEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault()
+    const orErr = validateOpenrouterModel(openrouterModel)
+    if (orErr) {
+      setOpenrouterModelErr(orErr)
+      openrouterModelRef.current?.focus()
+      return
+    }
     setSaving(true)
     setMsg(null)
     const body: SettingsUpdate = {
@@ -161,12 +184,10 @@ export function Settings(): React.JSX.Element {
     }
     if (password) body.smtp_password = password
     if (geminiKey) body.gemini_api_key = geminiKey
-    if (groqKey) body.groq_api_key = groqKey
     if (openrouterKey) body.openrouter_api_key = openrouterKey
     if (cerebrasKey) body.cerebras_api_key = cerebrasKey
     if (claudeKey) body.claude_api_key = claudeKey
     // Models: string vazia = limpa override (volta pro default); valor = sobrescreve
-    body.groq_model = groqModel.trim() || null
     body.openrouter_model = openrouterModel.trim() || null
     body.cerebras_model = cerebrasModel.trim() || null
     body.claude_model = claudeModel.trim() || null
@@ -184,8 +205,6 @@ export function Settings(): React.JSX.Element {
       setPassword('')
       setGeminiKeySet(cfg.gemini_api_key_set)
       setGeminiKey('')
-      setGroqKeySet(cfg.groq_api_key_set)
-      setGroqKey('')
       setOpenrouterKeySet(cfg.openrouter_api_key_set)
       setOpenrouterKey('')
       setCerebrasKeySet(cfg.cerebras_api_key_set)
@@ -216,6 +235,26 @@ export function Settings(): React.JSX.Element {
         <span className="font-sans text-sm">Carregando…</span>
       </div>
     )
+  }
+
+  async function clearProviderKey(provider: 'openrouter' | 'cerebras' | 'claude'): Promise<void> {
+    setMsg(null)
+    try {
+      await api.updateSettings({ [`${provider}_api_key`]: null } as SettingsUpdate)
+      if (provider === 'openrouter') {
+        setOpenrouterKey('')
+        setOpenrouterKeySet(false)
+      } else if (provider === 'cerebras') {
+        setCerebrasKey('')
+        setCerebrasKeySet(false)
+      } else {
+        setClaudeKey('')
+        setClaudeKeySet(false)
+      }
+      setMsg({ ok: true, text: `Chave de ${provider} removida.` })
+    } catch (err) {
+      setMsg({ ok: false, text: err instanceof Error ? err.message : String(err) })
+    }
   }
 
   return (
@@ -313,7 +352,7 @@ export function Settings(): React.JSX.Element {
           <SectionHeader
             icon={Languages}
             title="Tradução (Gemini)"
-            description="API key gratuita em aistudio.google.com/apikey. Flash dá ~1500 requests/dia no free tier."
+            description="API key em aistudio.google.com/apikey (ou Vertex AI logo abaixo). Suporta Gemini 4 (Hydrogen, Neon, Carbon) e Gemini 3.5 Flash Lite / 3.8 Flash."
           />
 
           <div className="space-y-1.5 pt-2">
@@ -350,9 +389,11 @@ export function Settings(): React.JSX.Element {
                 onChange={(e) => setModel(e.target.value)}
                 className={selectClasses}
               >
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash (padrão)</option>
-                <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
-                <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                {GEMINI_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
@@ -421,32 +462,37 @@ export function Settings(): React.JSX.Element {
           <SectionHeader
             icon={Layers}
             title="Cascade de providers (fallback automático)"
-            description="Adiciona providers free. Em ordem: o 1º é tentado primeiro; se cair em rate-limit (429) ou 5xx, cai pro próximo. Mesmo volume fica pinado no provider que pegou (consistência de voz)."
+            description="Tenta na ordem configurada; em 429/5xx cai pro próximo e pina o provider no volume. EPUBs longos usam limite por modelo (120k Gemini/Claude, 25k OpenRouter/Cerebras)."
           />
 
-          <ProviderKeyRow
-            label="Groq"
-            provider="groq"
-            url="https://console.groq.com/keys"
-            note="Default: llama-3.3-70b-versatile (1000 req/dia gratis, ultra rápido)"
-            keySet={groqKeySet}
-            value={groqKey}
-            onChange={setGroqKey}
-            model={groqModel}
-            onModelChange={setGroqModel}
-            defaultModel={defaultModels.groq}
-          />
           <ProviderKeyRow
             label="OpenRouter"
             provider="openrouter"
             url="https://openrouter.ai/keys"
-            note="Default: Qwen 2.5 72B :free (200/dia, 1000 com $5 crédito)"
+            note="Somente modelos :free são permitidos (proteção anti-cobrança ativa). Default: nvidia/nemotron-3-ultra-550b-a55b:free (550B, 1M ctx, PT-BR). Alternativa Google: google/gemma-4-31b-it:free."
             keySet={openrouterKeySet}
             value={openrouterKey}
             onChange={setOpenrouterKey}
+            onClearKey={() => clearProviderKey('openrouter')}
             model={openrouterModel}
-            onModelChange={setOpenrouterModel}
+            onModelChange={(val) => {
+              setOpenrouterModel(val)
+              if (openrouterModelErr) setOpenrouterModelErr(null)
+            }}
+            onModelBlur={() => setOpenrouterModelErr(validateOpenrouterModel(openrouterModel))}
+            modelError={openrouterModelErr}
+            modelInputRef={openrouterModelRef}
             defaultModel={defaultModels.openrouter}
+            datalistId="openrouter-free-models"
+            suggestions={[
+              'nvidia/nemotron-3-ultra-550b-a55b:free',
+              'google/gemma-4-31b-it:free',
+              'google/gemma-4-26b-a4b-it:free',
+              'nvidia/nemotron-3.5-super-vl:free',
+              'baidu/ernie-5.5-flash-preview:free',
+              'inclusionai/ling-3.2-flash:free',
+              'openrouter/free'
+            ]}
           />
           <ProviderKeyRow
             label="Cerebras"
@@ -456,6 +502,7 @@ export function Settings(): React.JSX.Element {
             keySet={cerebrasKeySet}
             value={cerebrasKey}
             onChange={setCerebrasKey}
+            onClearKey={() => clearProviderKey('cerebras')}
             model={cerebrasModel}
             onModelChange={setCerebrasModel}
             defaultModel={defaultModels.cerebras}
@@ -468,6 +515,7 @@ export function Settings(): React.JSX.Element {
             keySet={claudeKeySet}
             value={claudeKey}
             onChange={setClaudeKey}
+            onClearKey={() => clearProviderKey('claude')}
             model={claudeModel}
             onModelChange={setClaudeModel}
             defaultModel={defaultModels.claude}
@@ -481,7 +529,6 @@ export function Settings(): React.JSX.Element {
             <ul className="mt-3 space-y-1.5">
               {cascadeOrder.map((p, i) => {
                 const enabled =
-                  (p === 'groq' && (groqKey || groqKeySet)) ||
                   (p === 'openrouter' && (openrouterKey || openrouterKeySet)) ||
                   (p === 'cerebras' && (cerebrasKey || cerebrasKeySet)) ||
                   (p === 'claude' && (claudeKey || claudeKeySet)) ||
@@ -636,9 +683,15 @@ function ProviderKeyRow({
   keySet,
   value,
   onChange,
+  onClearKey,
   model,
   onModelChange,
-  defaultModel
+  onModelBlur,
+  modelError,
+  modelInputRef,
+  defaultModel,
+  datalistId,
+  suggestions
 }: {
   label: string
   provider: string
@@ -647,22 +700,41 @@ function ProviderKeyRow({
   keySet: boolean
   value: string
   onChange: (s: string) => void
+  onClearKey?: () => void
   model: string
   onModelChange: (s: string) => void
+  onModelBlur?: () => void
+  modelError?: string | null
+  modelInputRef?: React.RefObject<HTMLInputElement | null>
   defaultModel: string
+  datalistId?: string
+  suggestions?: string[]
 }): React.JSX.Element {
+  const errId = `model-err-${provider}`
+  const helpId = `model-help-${provider}`
   return (
     <div className="pt-3 first:pt-2">
       <div className="flex items-baseline justify-between gap-2">
         <Label htmlFor={`key-${provider}`}>{label}</Label>
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="font-sans text-[11px] text-[var(--stamp-red)] hover:underline"
-        >
-          pegar key →
-        </a>
+        <div className="flex items-baseline gap-3">
+          {keySet && onClearKey && (
+            <button
+              type="button"
+              onClick={onClearKey}
+              className="font-sans text-[11px] text-[var(--ink-400)] hover:text-[var(--ink-stamp)] hover:underline"
+            >
+              remover key
+            </button>
+          )}
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="font-sans text-[11px] text-[var(--stamp-red)] hover:underline"
+          >
+            pegar key →
+          </a>
+        </div>
       </div>
       <Input
         id={`key-${provider}`}
@@ -673,19 +745,43 @@ function ProviderKeyRow({
         className="mt-1.5"
       />
       <p className="font-sans mt-1 text-[11px] text-[var(--ink-500)]">{note}</p>
-      <details className="mt-2 group">
+      <details className="mt-2 group" open={!!modelError}>
         <summary className="font-sans cursor-pointer text-[11px] text-[var(--ink-500)] hover:text-[var(--ink-700)]">
           ▸ modelo customizado (opcional)
         </summary>
         <Input
+          ref={modelInputRef}
           id={`model-${provider}`}
           type="text"
+          list={datalistId}
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          aria-invalid={modelError ? true : undefined}
+          aria-describedby={modelError ? `${errId} ${helpId}` : helpId}
           placeholder={defaultModel}
           value={model}
           onChange={(e) => onModelChange(e.target.value)}
+          onBlur={onModelBlur}
           className="mt-1.5 font-mono text-[12px]"
         />
-        <p className="font-sans mt-1 text-[10px] text-[var(--ink-400)]">
+        {datalistId && suggestions && (
+          <datalist id={datalistId}>
+            {suggestions.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+        )}
+        {modelError && (
+          <p
+            id={errId}
+            className="font-sans mt-1 text-[11px] text-[var(--ink-stamp)]"
+            role="status"
+          >
+            {modelError}
+          </p>
+        )}
+        <p id={helpId} className="font-sans mt-1 text-[10px] text-[var(--ink-400)]">
           Em branco = usa default <code className="font-mono">{defaultModel}</code>. Útil pra testar
           outro modelo ou quando default for descontinuado.
         </p>

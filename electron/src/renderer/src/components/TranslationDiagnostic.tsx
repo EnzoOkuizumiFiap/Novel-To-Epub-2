@@ -5,7 +5,7 @@ import { Button } from '@renderer/components/ui/button'
 
 /**
  * Modal de diagnóstico: mostra estado do cascade pra usuário entender por que
- * tradução tá indo (ou não) pra cada provider. Resolve o caso "configurei Groq
+ * tradução tá indo (ou não) pra cada provider. Resolve o caso "configurei OpenRouter
  * mas só vai pro Gemini" — geralmente é pin gravado errado num volume.
  */
 export function TranslationDiagnostic({ onClose }: { onClose: () => void }): React.JSX.Element {
@@ -22,22 +22,28 @@ export function TranslationDiagnostic({ onClose }: { onClose: () => void }): Rea
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false))
   }
-  useEffect(load, [])
+  useEffect(() => {
+    let active = true
+    api
+      .translationDebugStatus()
+      .then((s) => active && setStatus(s))
+      .catch((e) => active && setErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => active && setLoading(false))
+    return () => {
+      active = false
+    }
+  }, [])
 
   async function clearPin(pin: VolumePinInfo): Promise<void> {
-    // pin não tem volume_id direto — precisa achar via lookup. Pra simplificar,
-    // forçamos resync via re-fetch (backend route apaga por volume_id, mas
-    // aqui usuário pode preferir deletar via outro caminho... vou expor por
-    // novel_id+volume_title se necessario futuro). Por enquanto, usa lookup
-    // via API de volumes da novel.
     const key = `${pin.novel_id}:${pin.volume_title ?? ''}`
     setClearingPin(key)
 
     try {
-      const vols = await api.getNovelVolumes(pin.novel_id)
-      const target = vols.find((v) => (v.volume_title ?? '') === (pin.volume_title ?? ''))
-      if (!target) throw new Error('volume correspondente não encontrado')
-      await api.resetVolumeTranslatorPin(target.id)
+      await api.resetNovelTranslatorPin(
+        pin.novel_id,
+        pin.volume_title ?? '',
+        pin.language || 'pt-BR'
+      )
       load()
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
@@ -145,7 +151,7 @@ export function TranslationDiagnostic({ onClose }: { onClose: () => void }): Rea
                 ) : (
                   <p className="font-sans text-[12px] text-[var(--ink-500)]">
                     Esses volumes ficam <em>presos</em> no provider abaixo. Pra forçar o cascade a
-                    usar outro provider (ex: Groq após adicionar a key), resete o pin.
+                    usar outro provider (ex: OpenRouter após adicionar a key), resete o pin.
                   </p>
                 )}
                 <ul className="space-y-1.5">

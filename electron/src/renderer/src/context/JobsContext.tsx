@@ -9,6 +9,7 @@ interface JobsContextValue {
 
 const JobsContext = createContext<JobsContextValue>({ jobs: {}, connected: false })
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useJobs(): JobsContextValue {
   return useContext(JobsContext)
 }

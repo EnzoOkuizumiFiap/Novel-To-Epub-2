@@ -92,9 +92,8 @@ class _TranslationOutput(BaseModel):
 def _format_glossary(entries: list[GlossaryEntry], *, max_chars: int = 8000) -> str:
     """Formata glossário pra prompt, com truncamento se passar do orçamento.
 
-    `max_chars` evita estourar TPM de provider free (Groq free = 12k tokens
-    por minuto, ~48k chars; nosso budget de 8k chars deixa folga pro
-    capítulo + style anchor + schema).
+    `max_chars` evita estourar TPM de providers gratuitos (nosso budget de 8k chars
+    deixa folga pro capítulo + style anchor + schema).
 
     A ORDEM de `entries` é respeitada — quem chama já manda priorizado
     (`glossary.select_for_chapter`: termos do capítulo primeiro, elenco
@@ -229,7 +228,7 @@ class GeminiProvider(TranslationProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-3.5-flash-lite",
         *,
         escalation_model: str | None = None,
         use_vertex: bool = False,

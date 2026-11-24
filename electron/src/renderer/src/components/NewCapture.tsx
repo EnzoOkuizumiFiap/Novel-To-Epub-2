@@ -1,19 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  BookUp,
   CircleAlert,
   CircleCheck,
   Download,
-  Eye,
   Globe,
   ImageIcon,
   Languages,
   Loader2,
   Sparkles
 } from 'lucide-react'
-import { api, type JobStatus, type NovelPreview, type SiteInfo } from '@renderer/lib/api'
+import { api, type EpubPreview, type JobStatus } from '@renderer/lib/api'
 import { useJobs } from '@renderer/context/JobsContext'
+import { jobProgressPct } from '@renderer/lib/jobsMerge'
 import { COVER_STYLES } from '@renderer/lib/coverStyles'
 import { CoverStyleMixer } from '@renderer/components/CoverStyleMixer'
+import { EpubSourceSection } from '@renderer/components/capture/EpubSourceSection'
+import { UrlSourceSection } from '@renderer/components/capture/UrlSourceSection'
+import { matchHost, PT_NATIVE_HOSTS } from '@renderer/lib/novel'
 import { Button } from '@renderer/components/ui/button'
 import { Input } from '@renderer/components/ui/input'
 import { Label } from '@renderer/components/ui/label'
@@ -42,16 +46,31 @@ function statusLabel(job: JobStatus): string {
   }
 }
 
+// "1, 3, 5" → [1,3,5] (ignora lixo, dedup). Vazio → [].
+function parseSkip(s: string): number[] {
+  return [
+    ...new Set(
+      s
+        .split(/[\s,]+/)
+        .map((x) => parseInt(x, 10))
+        .filter((n) => Number.isFinite(n))
+    )
+  ]
+}
+
 export function NewCapture({
   prefilledUrl,
   prefilledCoverStyle,
-  onUsedPrefill
+  prefilledNovelId
 }: {
   prefilledUrl?: string | null
   prefilledCoverStyle?: string | null
-  onUsedPrefill?: () => void
+  prefilledNovelId?: number | null
 } = {}): React.JSX.Element {
-  const [url, setUrl] = useState('')
+  const [sourceMode, setSourceMode] = useState<'url' | 'epub'>(() =>
+    prefilledNovelId ? 'epub' : 'url'
+  )
+  const [url, setUrl] = useState(() => prefilledUrl ?? '')
   const [volumeTitle, setVolumeTitle] = useState('')
   const [start, setStart] = useState('1')
   const [end, setEnd] = useState('')
@@ -59,30 +78,29 @@ export function NewCapture({
   const [skipChapters, setSkipChapters] = useState('')
   const [withCover, setWithCover] = useState(true)
   const [translate, setTranslate] = useState(false)
-  const [aiCover, setAiCover] = useState(false)
+  const [aiCover, setAiCover] = useState(() => !!prefilledCoverStyle)
   // Recaptura mantendo a capa: reusa a capa já gerada do volume (sem gerar nada).
   // Mutuamente exclusivo com "Gerar capa com IA".
   const [preserveCover, setPreserveCover] = useState(false)
   // Estilo de arte da capa ('' = automático/IA decide). Pré-preenchido pelo
   // default salvo da novel quando o preview roda.
-  const [coverStyle, setCoverStyle] = useState('')
+  const [coverStyle, setCoverStyle] = useState(() => prefilledCoverStyle ?? '')
   // Estilos habilitados nas Configurações (curadoria do usuário).
   const [enabledStyles, setEnabledStyles] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
-  // Sites suportados (vem do backend /api/sites — registry de adapters).
-  const [sites, setSites] = useState<SiteInfo[]>([])
   const { jobs } = useJobs()
 
-  // Lista de sites suportados (uma vez). Self-maintaining: novo adapter no
-  // backend aparece aqui automaticamente.
-  useEffect(() => {
-    api
-      .sites()
-      .then(setSites)
-      .catch(() => {})
-  }, [])
+  // Estado do modo EPUB local (mantido no pai pra não perder seleção ao trocar de aba)
+  const [epubFilePath, setEpubFilePath] = useState('')
+  const [epubFileName, setEpubFileName] = useState('')
+  const [epubPreview, setEpubPreview] = useState<EpubPreview | null>(null)
+  const [selectedNovelId, setSelectedNovelId] = useState<number | 'new'>(
+    () => prefilledNovelId ?? 'new'
+  )
+  const [seriesTitle, setSeriesTitle] = useState('')
+  const epubPickBtnRef = useRef<HTMLButtonElement | null>(null)
 
   // Carrega a curadoria de estilos das Configurações (uma vez).
   useEffect(() => {
@@ -91,20 +109,6 @@ export function NewCapture({
       .then((s) => setEnabledStyles(s.cover_styles_enabled ?? []))
       .catch(() => {})
   }, [])
-
-  // Prefill vindo de "Capturar mais capítulos" (NovelDetail): pré-preenche a URL
-  // e, se a novel tem estilo de capa travado, JÁ liga a capa IA + pré-seleciona o
-  // estilo — assim o novo volume mantém a coleção mesmo sem rodar o preview.
-  useEffect(() => {
-    if (!prefilledUrl) return
-    setUrl(prefilledUrl)
-    if (prefilledCoverStyle) {
-      setCoverStyle(prefilledCoverStyle)
-      setAiCover(true)
-    }
-    onUsedPrefill?.()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefilledUrl, prefilledCoverStyle])
 
   // Opções do seletor: estilos habilitados (ou todos os 24 se nenhum curado, pra
   // sempre ser usável). Garante que o default salvo apareça mesmo fora da curadoria.
@@ -120,130 +124,51 @@ export function NewCapture({
   }, [enabledStyles, coverStyle])
 
   const job = jobId ? jobs[jobId] : undefined
-  const pct = job && job.total ? Math.round((job.done / job.total) * 100) : 0
-
-  // Sites que JÁ entregam PT-BR — tradução é desnecessária (e custaria $$ à toa).
-  // Hostname do user é normalizado pra match com .com.br / subdomínios.
-  const PT_NATIVE_HOSTS = ['novelmania.com.br']
-  // Sites que estruturam volumes nativamente. Pro resto (NovelBin, NovelFull...)
-  // o preview é decorativo e custa rede — só dispara sob pedido (botão "Pré-visualizar").
-  const HOSTS_WITH_VOLUMES = ['novelmania.com.br']
-
-  function matchHost(rawUrl: string, hosts: string[]): boolean {
-    try {
-      const host = new URL(rawUrl.trim()).hostname.replace(/^www\./, '')
-      return hosts.some((d) => host === d || host.endsWith('.' + d))
-    } catch {
-      return false
-    }
-  }
+  const pct = job ? jobProgressPct(job) : 0
 
   const sourceIsPtNative = useMemo(() => matchHost(url, PT_NATIVE_HOSTS), [url])
-  const sourceHasVolumes = useMemo(() => matchHost(url, HOSTS_WITH_VOLUMES), [url])
+  const epubIsPtNative =
+    sourceMode === 'epub' && !!epubPreview?.language?.toLowerCase().startsWith('pt')
+  const effectivePtNative = sourceMode === 'url' ? sourceIsPtNative : epubIsPtNative
+  const effectiveTranslate = effectivePtNative ? false : translate
 
-  // Preview da novel — busca metadata + volumes.
-  // Auto-dispara (debounced) APENAS pra sites que entregam volumes (dropdown útil).
-  // Pra outros, mostra botão "Pré-visualizar" opcional — evita um request lento
-  // que só renderia título/capa decorativos.
-  const [preview, setPreview] = useState<NovelPreview | null>(null)
-  const [previewLoading, setPreviewLoading] = useState(false)
-  const [previewErr, setPreviewErr] = useState<string | null>(null)
-  const [selectedVolumeIdx, setSelectedVolumeIdx] = useState<number | -1>(-1)
-  // Token de cancelamento da request mais recente — evita race condition se o user
-  // edita a URL enquanto uma chamada (auto ou manual) ainda está no ar.
-  const previewReqRef = useRef(0)
-
-  async function runPreview(rawUrl: string): Promise<void> {
-    const trimmed = rawUrl.trim()
-    if (!trimmed || !trimmed.startsWith('http')) return
-    const token = ++previewReqRef.current
-    setPreviewLoading(true)
-    setPreviewErr(null)
-    try {
-      const data = await api.previewNovel(trimmed)
-      if (token === previewReqRef.current) {
-        setPreview(data)
-        // Pré-seleciona o estilo default salvo desta novel (se houver e o user
-        // ainda não escolheu manualmente). Liga a capa IA pra deixar visível.
-        if (data.default_cover_style) {
-          setCoverStyle(data.default_cover_style)
-          setAiCover(true)
-        }
-      }
-    } catch (err) {
-      if (token === previewReqRef.current) {
-        setPreviewErr(err instanceof Error ? err.message : String(err))
-      }
-    } finally {
-      if (token === previewReqRef.current) setPreviewLoading(false)
-    }
-  }
-
-  // Reseta preview a cada mudança de URL e dispara auto-preview SÓ se o host
-  // suporta volumes. O ++previewReqRef invalida requests in-flight de URLs antigas.
-  useEffect(() => {
-    setPreview(null)
-    setPreviewErr(null)
-    setSelectedVolumeIdx(-1)
-    // NÃO zera o coverStyle aqui — senão apagaria o estilo vindo do "Capturar
-    // mais" (que seta a URL programaticamente). Edição MANUAL da URL zera no
-    // onChange do input.
-    previewReqRef.current++
-    if (!sourceHasVolumes) return
-    const trimmed = url.trim()
-    if (!trimmed || !trimmed.startsWith('http')) return
-    const t = setTimeout(() => {
-      void runPreview(trimmed)
-    }, 800)
-    return () => clearTimeout(t)
-  }, [url, sourceHasVolumes])
-
-  // Auto-desliga tradução quando fonte é PT-BR
-  useEffect(() => {
-    if (sourceIsPtNative && translate) {
-      setTranslate(false)
-    }
-  }, [sourceIsPtNative, translate])
-
-  // Quando user seleciona um volume, auto-preenche start/end/volume_title
-  function selectVolume(idx: number): void {
-    setSelectedVolumeIdx(idx)
-    if (idx === -1 || !preview) return
-    const v = preview.volumes[idx]
-    setStart(String(v.start))
-    setEnd(String(v.end))
-    setVolumeTitle(v.name)
-  }
-
-  // "1, 3, 5" → [1,3,5] (ignora lixo, dedup). Vazio → [].
-  function parseSkip(s: string): number[] {
-    return [
-      ...new Set(
-        s
-          .split(/[\s,]+/)
-          .map((x) => parseInt(x, 10))
-          .filter((n) => Number.isFinite(n))
-      )
-    ]
-  }
-
-  async function onSubmit(e: React.FormEvent): Promise<void> {
+  async function onSubmit(e: React.SubmitEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault()
     setError(null)
+    if (sourceMode === 'epub' && !epubFilePath) {
+      setError('Selecione um arquivo .epub antes de iniciar.')
+      epubPickBtnRef.current?.focus()
+      return
+    }
     setSubmitting(true)
     try {
-      const res = await api.createDownload({
-        url: url.trim(),
-        start: Number(start) || 1,
-        end: end ? Number(end) : null,
-        with_cover: withCover,
-        translate_to: translate ? 'pt-BR' : null,
-        volume_title: volumeTitle.trim() || null,
-        ai_cover: aiCover,
-        cover_style: aiCover ? coverStyle || null : null,
-        skip_chapters: parseSkip(skipChapters),
-        preserve_cover: preserveCover
-      })
+      const res =
+        sourceMode === 'epub'
+          ? await api.importEpub({
+              file_path: epubFilePath,
+              novel_id: selectedNovelId === 'new' ? null : selectedNovelId,
+              series_title: selectedNovelId === 'new' ? seriesTitle.trim() || null : null,
+              volume_title: volumeTitle.trim() || null,
+              start: Number(start) || 1,
+              end: end ? Number(end) : null,
+              skip_chapters: parseSkip(skipChapters),
+              with_cover: withCover,
+              translate_to: effectiveTranslate ? 'pt-BR' : null,
+              ai_cover: aiCover,
+              cover_style: aiCover ? coverStyle || null : null
+            })
+          : await api.createDownload({
+              url: url.trim(),
+              start: Number(start) || 1,
+              end: end ? Number(end) : null,
+              with_cover: withCover,
+              translate_to: effectiveTranslate ? 'pt-BR' : null,
+              volume_title: volumeTitle.trim() || null,
+              ai_cover: aiCover,
+              cover_style: aiCover ? coverStyle || null : null,
+              skip_chapters: parseSkip(skipChapters),
+              preserve_cover: preserveCover
+            })
       setJobId(res.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -260,139 +185,106 @@ export function NewCapture({
           Nova captura
         </h2>
         <p className="font-sans max-w-md text-[15px] leading-relaxed text-[var(--ink-500)]">
-          Cole a URL de uma novel, escolha o intervalo de capítulos, e deixe a alquimia transformar
-          em <em className="font-display italic text-[var(--ink-700)]">livro de verdade</em>.
+          Cole a URL de uma novel ou importe um <code className="font-mono text-[13px]">.epub</code>{' '}
+          local, escolha os capítulos, e deixe a alquimia transformar em{' '}
+          <em className="font-display italic text-[var(--ink-700)]">livro de verdade</em>.
         </p>
       </header>
 
       <Card>
         <form onSubmit={onSubmit} className="space-y-5">
-          <div className="space-y-2">
-            <Label htmlFor="url">URL da novel</Label>
-            <Input
-              id="url"
-              placeholder="https://novelbin.me/novel-book/... ou https://novelmania.com.br/novels/..."
-              value={url}
-              onChange={(e) => {
-                setUrl(e.target.value)
+          <fieldset className="space-y-2">
+            <legend className="font-sans text-[11px] font-medium tracking-[0.18em] uppercase text-[var(--ink-500)]">
+              Origem da obra
+            </legend>
+            <div className="grid grid-cols-2 gap-2 rounded-xl border border-[var(--border-soft)] bg-[var(--paper-50)] p-1">
+              {(
+                [
+                  { value: 'url', label: 'URL da web', icon: Globe },
+                  { value: 'epub', label: 'Arquivo .epub local', icon: BookUp }
+                ] as const
+              ).map(({ value, label, icon: Icon }) => {
+                const active = sourceMode === value
+                return (
+                  <label
+                    key={value}
+                    className={[
+                      'font-sans flex cursor-pointer items-center justify-center gap-2 rounded-lg px-3 py-2 text-[13px] transition-all',
+                      'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-[var(--stamp-red)]/35',
+                      active
+                        ? 'bg-[var(--paper-200)] font-semibold text-[var(--ink-900)] shadow-xs'
+                        : 'text-[var(--ink-500)] hover:text-[var(--ink-800)]'
+                    ].join(' ')}
+                  >
+                    <input
+                      type="radio"
+                      name="capture-source"
+                      value={value}
+                      checked={active}
+                      onChange={() => {
+                        setSourceMode(value)
+                        setError(null)
+                        if (value === 'epub') setPreserveCover(false)
+                      }}
+                      className="sr-only"
+                    />
+                    <Icon className="size-4" />
+                    {label}
+                  </label>
+                )
+              })}
+            </div>
+          </fieldset>
+
+          {sourceMode === 'url' ? (
+            <UrlSourceSection
+              url={url}
+              onUrlChange={(next) => {
+                setUrl(next)
                 setCoverStyle('') // edição manual da URL descarta estilo pré-selecionado
               }}
-              required
+              onSelectVolume={(v) => {
+                setStart(v.start)
+                setEnd(v.end)
+                setVolumeTitle(v.volumeTitle)
+              }}
+              onDefaultCoverStyle={(style) => {
+                setCoverStyle(style)
+                setAiCover(true)
+              }}
             />
-            {sites.length > 0 && (
-              <details className="group pt-1">
-                <summary className="font-sans inline-flex cursor-pointer list-none items-center gap-1.5 text-[12px] text-[var(--ink-500)] transition-colors hover:text-[var(--stamp-red)]">
-                  <Globe className="size-3.5" />
-                  Sites suportados ({sites.length})
-                  <span className="text-[var(--ink-400)] transition-transform group-open:rotate-90">
-                    ›
-                  </span>
-                </summary>
-                <ul className="mt-2 space-y-2 border-l-2 border-[var(--border-soft)] pl-3">
-                  {sites.map((site) => {
-                    const isPtNative = site.domains.some((d) => PT_NATIVE_HOSTS.includes(d))
-                    return (
-                      <li key={site.name} className="space-y-1">
-                        <div className="font-sans flex items-center gap-2 text-[13px] text-[var(--ink-700)]">
-                          <span className="font-medium capitalize">{site.name}</span>
-                          {isPtNative && (
-                            <span className="rounded bg-[var(--paper-200)] px-1.5 py-0.5 text-[9px] font-medium tracking-wide text-[var(--ink-600)] uppercase">
-                              PT-BR nativo
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {site.domains.map((d) => (
-                            <code
-                              key={d}
-                              className="font-mono rounded bg-[var(--paper-100)] px-1.5 py-0.5 text-[11px] text-[var(--ink-600)]"
-                            >
-                              {d}
-                            </code>
-                          ))}
-                        </div>
-                      </li>
-                    )
-                  })}
-                </ul>
-                <p className="font-sans mt-2 text-[11px] text-[var(--ink-400)]">
-                  Cole a URL de uma novel de qualquer um desses sites.
-                </p>
-              </details>
-            )}
-            {previewLoading && (
-              <div className="font-sans flex items-center gap-2 pt-1 text-[12px] text-[var(--ink-500)]">
-                <Loader2 className="size-3.5 animate-spin" /> Lendo página da novel…
-              </div>
-            )}
-            {/* Sites sem volumes nativos: nao disparamos preview automatico
-                (poupa um request lento que so renderiza titulo/capa decorativos).
-                Mostra um link opt-in pra quem quiser ver a previa. */}
-            {!sourceHasVolumes && !preview && !previewLoading && url.trim().startsWith('http') && (
-              <button
-                type="button"
-                onClick={() => void runPreview(url)}
-                className="font-sans inline-flex items-center gap-1.5 pt-1 text-[12px] text-[var(--ink-500)] underline decoration-[var(--ink-300)] underline-offset-4 transition-colors hover:text-[var(--stamp-red)] hover:decoration-[var(--stamp-red)]"
-              >
-                <Eye className="size-3.5" /> Pré-visualizar (opcional)
-              </button>
-            )}
-            {previewErr && (
-              <div className="font-sans pt-1 text-[12px] text-[var(--ink-stamp)]">{previewErr}</div>
-            )}
-            {preview && (
-              <div
-                className={[
-                  'mt-3 flex gap-4 rounded-xl border bg-[var(--paper-50)] p-3',
-                  'border-[var(--border-soft)]'
-                ].join(' ')}
-              >
-                {preview.cover_url ? (
-                  <img
-                    src={preview.cover_url}
-                    alt=""
-                    className="size-16 shrink-0 rounded object-cover shadow-sm"
-                  />
-                ) : (
-                  <div className="size-16 shrink-0 rounded bg-[var(--paper-300)]" />
-                )}
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="font-display truncate text-[15px] font-medium tracking-tight">
-                    {preview.title}
-                  </div>
-                  <div className="font-sans text-[11px] tracking-wide text-[var(--ink-500)]">
-                    {preview.author ?? 'autor desconhecido'} ·{' '}
-                    <strong>{preview.total_chapters}</strong> caps
-                    {preview.volumes.length > 0 && (
-                      <>
-                        {' '}
-                        · <strong>{preview.volumes.length}</strong> volumes detectados
-                      </>
-                    )}
-                  </div>
-                  {preview.volumes.length > 0 && (
-                    <div className="pt-1.5">
-                      <select
-                        value={selectedVolumeIdx}
-                        onChange={(e) => selectVolume(Number(e.target.value))}
-                        className={[
-                          'font-sans w-full rounded-md border bg-[var(--paper-100)] px-2 py-1.5 text-[12px]',
-                          'border-[var(--border-soft)] focus:border-[var(--stamp-red)] focus:outline-none'
-                        ].join(' ')}
-                      >
-                        <option value={-1}>— Selecione um volume pra auto-preencher —</option>
-                        {preview.volumes.map((v, i) => (
-                          <option key={i} value={i}>
-                            {v.name} (caps {v.start}–{v.end}, {v.chapter_count})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+          ) : (
+            <EpubSourceSection
+              pickBtnRef={epubPickBtnRef}
+              epubFileName={epubFileName}
+              epubPreview={epubPreview}
+              selectedNovelId={selectedNovelId}
+              onSelectNovel={setSelectedNovelId}
+              seriesTitle={seriesTitle}
+              onSeriesTitleChange={setSeriesTitle}
+              onClearError={() => setError(null)}
+              onEpubLoadFailed={() => {
+                setEpubPreview(null)
+                setEpubFilePath('')
+              }}
+              onEpubLoaded={({ filePath, fileName, preview }) => {
+                setEpubFilePath(filePath)
+                setEpubFileName(fileName)
+                setEpubPreview(preview)
+                setVolumeTitle(preview.title)
+                setSeriesTitle(preview.series_name)
+                setStart('1')
+                setEnd('')
+                setSkipChapters('')
+                if (!prefilledNovelId) {
+                  setSelectedNovelId(preview.matched_novel_id ?? 'new')
+                }
+                if (!preview.language?.toLowerCase().startsWith('pt')) {
+                  setTranslate(true)
+                }
+              }}
+            />
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="volume-title">
@@ -464,15 +356,15 @@ export function NewCapture({
             <label
               className={[
                 'font-sans flex items-start gap-3 text-[14px]',
-                sourceIsPtNative
+                effectivePtNative
                   ? 'cursor-not-allowed text-[var(--ink-400)]'
                   : 'cursor-pointer text-[var(--ink-700)]'
               ].join(' ')}
             >
               <Checkbox
                 className="mt-0.5"
-                checked={translate}
-                disabled={sourceIsPtNative}
+                checked={effectiveTranslate}
+                disabled={effectivePtNative}
                 onCheckedChange={(v) => setTranslate(v === true)}
               />
               <div className="flex flex-col">
@@ -480,9 +372,9 @@ export function NewCapture({
                   <Languages className="size-4 text-[var(--stamp-red)]" />
                   Traduzir para PT-BR <span className="text-[var(--ink-400)]">(cascade IA)</span>
                 </span>
-                {sourceIsPtNative && (
+                {effectivePtNative && (
                   <span className="font-sans text-[11px] leading-relaxed text-[var(--book-3)]">
-                    ✓ Fonte já é PT-BR nativa — tradução desnecessária (R$ 0).
+                    ✓ Fonte já está em português — tradução desnecessária (R$ 0).
                   </span>
                 )}
               </div>
@@ -508,28 +400,29 @@ export function NewCapture({
               </div>
             </label>
 
-            {/* Manter capa atual — pra recapturar capítulos (ex: corrigir com
-                "Ignorar capítulos") sem mexer na capa já gerada. */}
-            <label className="font-sans flex cursor-pointer items-start gap-3 text-[14px] text-[var(--ink-700)]">
-              <Checkbox
-                className="mt-0.5"
-                checked={preserveCover}
-                onCheckedChange={(v) => {
-                  setPreserveCover(v === true)
-                  if (v === true) setAiCover(false) // exclusivos
-                }}
-              />
-              <div className="flex flex-col">
-                <span className="inline-flex items-center gap-1.5">
-                  <ImageIcon className="size-4 text-[var(--book-3)]" />
-                  Manter capa atual <span className="text-[var(--ink-400)]">(recaptura)</span>
-                </span>
-                <span className="font-sans text-[11px] leading-relaxed text-[var(--ink-400)]">
-                  Reusa a capa já gerada deste volume — não regenera nada (R$ 0). Use pra recapturar
-                  capítulos sem alterar a capa.
-                </span>
-              </div>
-            </label>
+            {/* Manter capa atual — pra recapturar capítulos da web sem mexer na capa já gerada. */}
+            {sourceMode === 'url' && (
+              <label className="font-sans flex cursor-pointer items-start gap-3 text-[14px] text-[var(--ink-700)]">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={preserveCover}
+                  onCheckedChange={(v) => {
+                    setPreserveCover(v === true)
+                    if (v === true) setAiCover(false) // exclusivos
+                  }}
+                />
+                <div className="flex flex-col">
+                  <span className="inline-flex items-center gap-1.5">
+                    <ImageIcon className="size-4 text-[var(--book-3)]" />
+                    Manter capa atual <span className="text-[var(--ink-400)]">(recaptura)</span>
+                  </span>
+                  <span className="font-sans text-[11px] leading-relaxed text-[var(--ink-400)]">
+                    Reusa a capa já gerada deste volume — não regenera nada (R$ 0). Use pra
+                    recapturar capítulos sem alterar a capa.
+                  </span>
+                </div>
+              </label>
+            )}
 
             {/* Mistura de estilos de arte — só faz sentido com capa IA ligada. */}
             {aiCover && (
@@ -549,7 +442,10 @@ export function NewCapture({
           </div>
 
           {error && (
-            <p className="font-sans flex items-center gap-2 text-sm text-[var(--ink-stamp)]">
+            <p
+              className="font-sans flex items-center gap-2 text-sm text-[var(--ink-stamp)]"
+              role="status"
+            >
               <CircleAlert className="size-4" />
               {error}
             </p>
@@ -559,7 +455,7 @@ export function NewCapture({
             type="submit"
             variant="rainbow"
             size="lg"
-            disabled={submitting || !url.trim()}
+            disabled={submitting || (sourceMode === 'url' && !url.trim())}
             className="w-full"
           >
             {submitting ? (
@@ -570,7 +466,7 @@ export function NewCapture({
             ) : (
               <>
                 <Download className="size-5" />
-                Baixar e gerar EPUB
+                {sourceMode === 'epub' ? 'Importar e traduzir EPUB' : 'Baixar e gerar EPUB'}
               </>
             )}
           </Button>

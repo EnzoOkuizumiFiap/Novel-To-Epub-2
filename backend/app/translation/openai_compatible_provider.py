@@ -1,6 +1,6 @@
-"""Provider que fala spec OpenAI Chat Completions (Groq, OpenRouter, Cerebras, etc).
+"""Provider que fala spec OpenAI Chat Completions (OpenRouter, Cerebras, DeepSeek, etc).
 
-Por que UM provider cobre todos: Groq, OpenRouter, Cerebras, Together, DeepInfra,
+Por que UM provider cobre todos: OpenRouter, Cerebras, Together, DeepInfra,
 DeepSeek (api.deepseek.com), Mistral, e o próprio OpenAI usam o mesmo formato de
 request (`POST /v1/chat/completions` com `{model, messages, response_format}`).
 Diferenças ficam só em (1) base_url, (2) catalog de modelos, (3) qual flag de
@@ -17,6 +17,7 @@ Estratégia: tenta json_object (compatibilidade ampla) + instrução no prompt.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -36,7 +37,6 @@ log = get_logger("openai-compat")
 
 # Configs conhecidas dos providers populares — facilita usuario nao errar URL
 PROVIDER_BASE_URLS: dict[str, str] = {
-    "groq": "https://api.groq.com/openai/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "cerebras": "https://api.cerebras.ai/v1",
     "deepseek": "https://api.deepseek.com/v1",
@@ -47,9 +47,14 @@ PROVIDER_BASE_URLS: dict[str, str] = {
 
 
 # Codigos HTTP transitorios — cascade decide se retenta no mesmo provider ou pula.
-# 413 (Request Too Large) entra aqui porque Groq usa 413 pra TPM-per-minute
-# excedido — funciona normal após reset do minuto (mesmo padrão de 429).
+# 413 (Request Too Large) indica payload/TPM excedido — funciona normal após reset.
 RETRYABLE_HTTP = {408, 413, 429, 500, 502, 503, 504}
+
+
+def is_openrouter_free_model(model: str | None) -> bool:
+    """True apenas se o modelo OpenRouter for explicitamente gratuito."""
+    m = (model or "").strip()
+    return m == "openrouter/free" or m.endswith(":free")
 
 
 class OpenAICompatTranslationError(GeminiTranslationError):
@@ -99,8 +104,8 @@ NÃO escreva nada antes ou depois do JSON. NÃO use blocos ```json.
 
 
 def _safe_json_parse(text: str) -> dict[str, Any] | None:
-    """Parse defensivo — modelos open as vezes envolvem em ```json...``` ou prefacio."""
-    text = text.strip()
+    """Parse defensivo — modelos open as vezes envolvem em <think>, ```json...``` ou prefacio."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S | re.I).strip()
     # Remove markdown fence se veio
     if text.startswith("```"):
         lines = text.split("\n")
@@ -118,17 +123,21 @@ def _safe_json_parse(text: str) -> dict[str, Any] | None:
 
 
 class OpenAICompatibleProvider(TranslationProvider):
-    """Generaliza Groq / OpenRouter / Cerebras / DeepSeek / Together / etc."""
+    """Generaliza OpenRouter / Cerebras / DeepSeek / Together / etc."""
 
     def __init__(
         self,
         *,
-        provider_name: str,  # "groq" | "openrouter" | "cerebras" | ...
+        provider_name: str,  # "openrouter" | "cerebras" | ...
         api_key: str,
         model: str,
         base_url: str | None = None,
-        timeout: float = 120.0,
+        timeout: float = 360.0,
     ) -> None:
+        if provider_name == "openrouter" and not is_openrouter_free_model(model):
+            raise ValueError(
+                f"OpenRouter permite apenas modelos gratuitos (':free' ou 'openrouter/free'); bloqueado: {model!r}"
+            )
         self.name = provider_name
         self.model = model
         self.api_key = api_key
@@ -152,6 +161,10 @@ class OpenAICompatibleProvider(TranslationProvider):
         style_profile_block: str = "",
         style_anchor_block: str = "",
     ) -> TranslationResult:
+        if self.name == "openrouter" and not is_openrouter_free_model(self.model):
+            raise ValueError(
+                f"OpenRouter permite apenas modelos gratuitos (':free' ou 'openrouter/free'); bloqueado: {self.model!r}"
+            )
         system = _build_system_prompt(
             novel_title, target_language, glossary,
             style_profile_block=style_profile_block,
@@ -169,7 +182,7 @@ class OpenAICompatibleProvider(TranslationProvider):
             headers["HTTP-Referer"] = "https://github.com/local/novel-to-epub"
             headers["X-Title"] = "Novel to EPUB"
 
-        body = {
+        body: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
@@ -179,15 +192,18 @@ class OpenAICompatibleProvider(TranslationProvider):
             "response_format": {"type": "json_object"},
             "temperature": 0.3,
         }
+        if self.name == "openrouter":
+            body["reasoning"] = {"enabled": False}
 
         # 2 tentativas de PARSE (modelo as vezes ignora JSON em 1 try mas acerta na 2);
-        # erros HTTP transitorios propagam pra cascade decidir.
+        # se HTTP 400 por param opcional (response_format/reasoning), remove e retenta.
         parsed_dict: dict[str, Any] | None = None
         content = ""
         usage: dict[str, int] = {}
         last_err: str | None = None
+        parse_attempts = 0
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            for attempt in range(2):
+            while parse_attempts < 2:
                 try:
                     resp = await client.post(url, headers=headers, json=body)
                 except httpx.HTTPError as exc:
@@ -205,6 +221,38 @@ class OpenAICompatibleProvider(TranslationProvider):
                         status_code=resp.status_code,
                         retry_after_s=retry_after,
                     )
+                if resp.status_code == 400:
+                    detail = _short_error_detail(resp)
+                    low = detail.lower()
+                    changed = False
+                    if "response_format" in body and (
+                        "response_format" in low or "json_object" in low or "structured" in low
+                    ):
+                        body.pop("response_format", None)
+                        changed = True
+                    if "reasoning" in body and "reasoning" in low:
+                        body.pop("reasoning", None)
+                        changed = True
+                    if "reasoning_effort" in body and "reasoning" in low:
+                        body.pop("reasoning_effort", None)
+                        changed = True
+                    if not changed and any(
+                        k in body for k in ("response_format", "reasoning", "reasoning_effort")
+                    ):
+                        body.pop("response_format", None)
+                        body.pop("reasoning", None)
+                        body.pop("reasoning_effort", None)
+                        changed = True
+                    if changed:
+                        log.warning(
+                            "openai_compat_strip_param_retry",
+                            provider=self.name, model=self.model, detail=detail,
+                        )
+                        continue
+                    raise OpenAICompatTranslationError(
+                        f"{self.name} HTTP 400 (permanente) no cap {chapter_index}: {detail}",
+                        status_code=400,
+                    )
                 if resp.status_code >= 400:
                     detail = _short_error_detail(resp)
                     raise OpenAICompatTranslationError(
@@ -212,6 +260,7 @@ class OpenAICompatibleProvider(TranslationProvider):
                         status_code=resp.status_code,
                     )
 
+                parse_attempts += 1
                 payload = resp.json()
                 choices = payload.get("choices") or []
                 if not choices:
@@ -222,11 +271,11 @@ class OpenAICompatibleProvider(TranslationProvider):
                 parsed_dict = _safe_json_parse(content)
                 if parsed_dict is not None:
                     break
-                last_err = f"JSON inválido (attempt={attempt}, preview={content[:120]!r})"
+                last_err = f"JSON inválido (attempt={parse_attempts - 1}, preview={content[:120]!r})"
                 log.warning(
                     "openai_compat_parse_failed",
                     provider=self.name, chapter=chapter_index,
-                    attempt=attempt, detail=last_err,
+                    attempt=parse_attempts - 1, detail=last_err,
                 )
 
         if parsed_dict is None:
@@ -270,7 +319,7 @@ class OpenAICompatibleProvider(TranslationProvider):
 def _parse_retry_after(resp: httpx.Response) -> float | None:
     """Lê quanto tempo até poder retentar. Múltiplos headers possíveis:
       - `Retry-After`: padrão HTTP, em segundos OU data HTTP-date
-      - `x-ratelimit-reset-*`: Groq/OpenAI variant — segundos até reset
+      - `x-ratelimit-reset-*`: variante OpenAI — segundos até reset
 
     Limita em 600s pra não dormir absurdo (se vier 3600 = 1h, melhor desistir
     desse provider e cair pro próximo).
@@ -281,7 +330,7 @@ def _parse_retry_after(resp: httpx.Response) -> float | None:
             return min(600.0, max(1.0, float(ra)))
         except ValueError:
             pass  # date format — ignora, usa default
-    # Groq retorna "x-ratelimit-reset-requests" / "x-ratelimit-reset-tokens"
+    # Providers OpenAI-compatíveis retornam "x-ratelimit-reset-requests" / "-tokens"
     for h in ("x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
         val = resp.headers.get(h)
         if val:

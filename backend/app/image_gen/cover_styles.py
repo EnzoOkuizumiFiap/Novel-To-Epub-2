@@ -242,13 +242,3 @@ def style_prompt(style_id: str | None) -> str | None:
         "the lower-weighted aesthetics layer in as motifs and accents without "
         "breaking the unified look."
     )
-
-
-def style_label(style_id: str | None) -> str | None:
-    """Label humano pra UI/logs. Mistura -> 'Dark Fantasy 35% · Mythic 35% · …'."""
-    parsed = parse_style_spec(style_id)
-    if not parsed:
-        return None
-    if len(parsed) == 1:
-        return parsed[0][0].label
-    return " · ".join(f"{s.label} {pct}%" for s, pct in parsed)

@@ -8,6 +8,7 @@ declare global {
         defaultName: string,
         onProgress?: (pct: number) => void
       ) => Promise<{ canceled?: boolean; filePath?: string; bytes?: number; error?: string }>
+      pickEpubFile: () => Promise<{ canceled?: boolean; filePath?: string }>
     }
   }
 }

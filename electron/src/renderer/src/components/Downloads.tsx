@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { api, type JobStatus, type TranslationFailure } from '@renderer/lib/api'
 import { useJobs } from '@renderer/context/JobsContext'
+import { jobProgressPct } from '@renderer/lib/jobsMerge'
 import { cn } from '@renderer/lib/utils'
 import { Button } from '@renderer/components/ui/button'
 import { Progress } from '@renderer/components/ui/progress'
@@ -65,9 +66,11 @@ function statusLabel(job: JobStatus): string {
     case 'error':
       return `erro · ${job.error ?? 'desconhecido'}`
     case 'cancelled':
-      return 'cancelado'
+      return job.translate_to ? 'pausado — clique em Continuar tradução' : 'pausado'
     case 'interrupted':
-      return 'interrompido — clique em Continuar captura'
+      return job.translate_to
+        ? 'interrompido — clique em Continuar tradução'
+        : 'interrompido — clique em Continuar captura'
   }
 }
 
@@ -234,7 +237,7 @@ function JobCard({
   const [regeneratingCover, setRegeneratingCover] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [sendMsg, setSendMsg] = useState<{ ok: boolean; text: string } | null>(null)
-  const pct = job.total ? Math.round((job.done / job.total) * 100) : 0
+  const pct = jobProgressPct(job)
   const hasTranslationFailures = job.status === 'done' && job.translation_failed > 0
   const hasDownloadFailures = job.status === 'done' && job.download_failed > 0
   // Capa pode ser gerada pra qualquer download concluído — mesmo que o usuário
@@ -415,15 +418,20 @@ function JobCard({
         </div>
 
         {canCancel && (
-          <div className="flex items-center gap-2 pt-1">
+          <div className="flex flex-wrap items-center gap-3 pt-1">
             <Button variant="outline" size="sm" onClick={cancelJob} disabled={cancelling}>
               {cancelling ? (
                 <Loader2 className="size-3.5 animate-spin" />
               ) : (
                 <X className="size-3.5" />
               )}
-              Cancelar
+              {job.translate_to ? 'Pausar' : 'Cancelar'}
             </Button>
+            {job.translate_to && (
+              <span className="font-sans text-[11px] text-[var(--ink-400)]">
+                O glossário e as partes já traduzidas ficam salvos em cache.
+              </span>
+            )}
             {sendMsg && !sendMsg.ok && (
               <span className="font-sans text-[12px] text-[var(--ink-stamp)]">{sendMsg.text}</span>
             )}
@@ -438,7 +446,7 @@ function JobCard({
               ) : (
                 <RefreshCw className="size-3.5" />
               )}
-              Continuar captura
+              {job.translate_to ? 'Continuar tradução' : 'Continuar captura'}
             </Button>
             <Button
               variant="ghost"

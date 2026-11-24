@@ -102,12 +102,20 @@ class UsageSummary(BaseModel):
     last_30d_usd: float
     last_7d_usd: float
     avg_per_chapter_usd: float
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_tokens: int = 0
+    last_30d_tokens: int = 0
+    last_7d_tokens: int = 0
 
 
 class UsageDay(BaseModel):
     day: str  # YYYY-MM-DD
     cost_usd: float
     ops: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
 
 
 class UsageByNovel(BaseModel):
@@ -117,12 +125,18 @@ class UsageByNovel(BaseModel):
     ops: int
     chapters_translated: int
     covers_generated: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
 
 
 class UsageByProvider(BaseModel):
     provider: str
     total_usd: float
     ops: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
 
 
 class VolumePinInfo(BaseModel):
@@ -343,20 +357,18 @@ class SettingsOut(BaseModel):
     gemini_api_key_set: bool  # nunca expomos a chave
     target_language: str
     translation_model: str
-    # --- Cascade providers (mai 2026) ---
-    groq_api_key_set: bool
+    # --- Cascade providers ---
     openrouter_api_key_set: bool
     cerebras_api_key_set: bool
     claude_api_key_set: bool
     # Models por provider (None = default em factory.DEFAULT_MODELS)
-    groq_model: str | None
     openrouter_model: str | None
     cerebras_model: str | None
     claude_model: str | None
     cover_brief_provider: str  # "gemini" | "claude"
     # Defaults pra UI mostrar como placeholder
     default_models: dict[str, str]
-    cascade_order: list[str]  # ex: ["groq","openrouter","cerebras","gemini"]
+    cascade_order: list[str]  # ex: ["openrouter","cerebras","gemini","claude"]
     # Ids de estilo de capa habilitados no dropdown (ver image_gen.cover_styles).
     cover_styles_enabled: list[str]
     # --- Gemini via Vertex AI ---
@@ -377,10 +389,8 @@ class SettingsUpdate(BaseModel):
     gemini_api_key: str | None = None
     target_language: str | None = None
     translation_model: str | None = None
-    groq_api_key: str | None = None
     openrouter_api_key: str | None = None
     cerebras_api_key: str | None = None
-    groq_model: str | None = None
     openrouter_model: str | None = None
     cerebras_model: str | None = None
     claude_api_key: str | None = None
@@ -404,3 +414,43 @@ class GlossaryEntryOut(BaseModel):
     confidence: str
     first_seen_chapter: int | None
     source: str
+
+
+class EpubPreviewRequest(BaseModel):
+    file_path: str
+
+
+class EpubChapterPreviewOut(BaseModel):
+    index: int
+    title: str
+    char_count: int
+    paragraph_count: int
+
+
+class EpubPreviewOut(BaseModel):
+    file_path: str
+    title: str
+    series_name: str
+    author: str | None
+    description: str | None
+    language: str | None
+    cover_data_url: str | None
+    total_chapters: int
+    total_chars: int
+    chapters: list[EpubChapterPreviewOut]
+    matched_novel_id: int | None = None
+    matched_novel_title: str | None = None
+
+
+class EpubImportRequest(BaseModel):
+    file_path: str
+    novel_id: int | None = None
+    series_title: str | None = None
+    volume_title: str | None = None
+    start: int = Field(1, ge=1)
+    end: int | None = Field(None, ge=1)
+    skip_chapters: list[int] = Field(default_factory=list)
+    with_cover: bool = True
+    translate_to: str | None = "pt-BR"
+    ai_cover: bool = False
+    cover_style: str | None = None

@@ -21,6 +21,7 @@ rich>=13.9            # progress bar / output
 
 # --- Utils ---
 python-slugify>=8.0   # nomes de arquivo seguros
+Pillow>=10.0          # composicao de capas e wallpapers
 
 # --- API (Etapa 2) ---
 fastapi>=0.115

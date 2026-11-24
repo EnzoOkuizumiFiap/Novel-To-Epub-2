@@ -15,7 +15,10 @@ export function Logo({
   const s = sizes[size]
   return (
     <div className={cn('font-display inline-flex items-center', s.gap, className)}>
-      <span className={cn('font-medium italic tracking-tight', s.txt)} style={{ color: 'var(--ink-900)' }}>
+      <span
+        className={cn('font-medium italic tracking-tight', s.txt)}
+        style={{ color: 'var(--ink-900)' }}
+      >
         Novel
       </span>
       <svg
@@ -33,7 +36,10 @@ export function Logo({
           strokeLinejoin="round"
         />
       </svg>
-      <span className={cn('font-semibold tracking-tight', s.txt)} style={{ color: 'var(--ink-900)' }}>
+      <span
+        className={cn('font-semibold tracking-tight', s.txt)}
+        style={{ color: 'var(--ink-900)' }}
+      >
         EPUB
       </span>
     </div>

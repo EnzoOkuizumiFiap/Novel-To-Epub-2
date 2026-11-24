@@ -48,19 +48,20 @@ def translation_debug_status() -> TranslationDebugStatus:
     """Snapshot do estado: quais providers estão configurados, qual ordem,
     quais pins existem (volume → provider gravado), e últimas 20 chamadas
     de tradução. Usado pra diagnosticar 'meu cascade só usa Gemini'."""
-    from app.translation.factory import _read_keys
+    from app.translation.factory import _read_keys, with_known_providers
 
     cfg = SettingsStore().get()
     keys = _read_keys(cfg)
     active = [name for name, key in keys.items() if key]
     inactive = [name for name, key in keys.items() if not key]
 
-    raw_order = cfg.get("cascade_order") or "groq,openrouter,cerebras,gemini"
-    order = (
+    raw_order = cfg.get("cascade_order") or "openrouter,cerebras,gemini,claude"
+    raw_list = (
         [p.strip() for p in raw_order.split(",") if p.strip()]
         if isinstance(raw_order, str)
         else list(raw_order)
     )
+    order = with_known_providers(raw_list)
 
     # Pins
     with get_session() as s:

@@ -11,6 +11,7 @@ from app.api.routes import (
     chapters,
     covers,
     downloads,
+    epub_import,
     library,
     system,
     usage,
@@ -18,5 +19,5 @@ from app.api.routes import (
 )
 
 router = APIRouter(prefix="/api")
-for _module in (system, downloads, library, volumes, covers, chapters, usage):
+for _module in (system, downloads, epub_import, library, volumes, covers, chapters, usage):
     router.include_router(_module.router)

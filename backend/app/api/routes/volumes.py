@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
 from app.api.schemas import (
@@ -226,14 +226,13 @@ async def rename_volume(volume_id: int, body: RenameVolumeRequest) -> dict:
     return updated
 
 
-@router.delete("/volumes/{volume_id}/translator-pin", status_code=204)
-def reset_volume_pin(volume_id: int) -> None:
-    """Apaga o pin do volume. Próximo cap traduzido roda o cascade do zero
-    (tenta o 1º provider configurado). Util quando pin gravou no provider errado."""
-    vol = VolumeStore().get(volume_id)
-    if vol is None:
-        raise HTTPException(status_code=404, detail="volume nao encontrado")
-    lang = vol["translate_to"] or "pt-BR"
-    cleared = VolumePinStore().clear(vol["novel_id"], vol["volume_title"], lang)
+@router.delete("/library/{novel_id}/translator-pin", status_code=204)
+def reset_novel_pin(
+    novel_id: int,
+    volume_title: str = Query(...),
+    language: str = Query("pt-BR"),
+) -> None:
+    """Apaga o pin por (novel_id, volume_title, language) — funciona mesmo antes do EPUB existir."""
+    cleared = VolumePinStore().clear(novel_id, volume_title, language)
     if not cleared:
-        raise HTTPException(status_code=404, detail="volume nao tinha pin")
+        raise HTTPException(status_code=404, detail="pin nao encontrado")

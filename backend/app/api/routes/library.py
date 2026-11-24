@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from app.api.schemas import (
     AddMirrorRequest,
@@ -16,6 +16,7 @@ from app.api.schemas import (
 from app.db.cache import ChapterCache
 from app.db.mirror_store import MirrorStore
 from app.db.volume_store import VolumeStore
+from app.epub.reader import load_local_epub_cover
 from app.scraper.registry import registry
 from app.translation.glossary import GlossaryStore
 
@@ -33,6 +34,18 @@ def get_novel_detail(novel_id: int) -> dict:
     if novel is None:
         raise HTTPException(status_code=404, detail="novel nao encontrada")
     return novel
+
+
+@router.get("/library/{novel_id}/cover")
+def get_local_novel_cover(
+    novel_id: int, volume_title: str | None = None
+) -> Response:
+    """Serve a capa local extraída de um EPUB importado."""
+    got = load_local_epub_cover(novel_id, volume_title)
+    if got is None:
+        raise HTTPException(status_code=404, detail="capa local nao encontrada")
+    data, mime = got
+    return Response(content=data, media_type=mime)
 
 
 @router.get("/library/{novel_id}/volumes", response_model=list[VolumeOut])

@@ -29,7 +29,9 @@ const api = {
     } finally {
       ipcRenderer.removeListener('download-progress', listener)
     }
-  }
+  },
+  pickEpubFile: (): Promise<{ canceled?: boolean; filePath?: string }> =>
+    ipcRenderer.invoke('pick-epub-file')
 }
 
 // Só `api` vai pro renderer. Antes também expunha `window.electron` (o

@@ -1,7 +1,7 @@
 """Adapter para NovelMania (novelmania.com.br) — fonte PT-BR nativa.
 
 Por que importa: novel já vem traduzida em português pelo fan-tradutor do site,
-então não precisa pagar Gemini/Groq pra traduzir. Custo de tradução = R$ 0.
+então não precisa pagar Gemini/OpenRouter pra traduzir. Custo de tradução = R$ 0.
 
 Estrutura do site (mapeada em 2026-05):
   - Stack: Rails + Bootstrap 4, SSR puro (sem AJAX), Cloudflare como CDN passivo.

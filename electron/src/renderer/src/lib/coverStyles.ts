@@ -43,7 +43,7 @@ export const COVER_STYLE_LABELS: Record<string, string> = Object.fromEntries(
 // normalizados pra 100% no backend). Um id sozinho = 100% (formato antigo).
 // Estes helpers espelham backend/app/image_gen/cover_styles.py.
 
-export interface StyleWeight {
+interface StyleWeight {
   id: string
   weight: number
 }

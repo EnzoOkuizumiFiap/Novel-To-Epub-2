@@ -139,7 +139,7 @@ def test_factory_builds_claude_from_settings_and_appends_to_order():
     from app.translation.factory import build_translator
 
     SettingsStore().update({"claude_api_key": "sk-test", "claude_model": "claude-sonnet-5-5",
-                            "cascade_order": "gemini,groq"})
+                            "cascade_order": "gemini,openrouter"})
     t = build_translator("pt-BR")
     providers = t.provider.states if hasattr(t.provider, "states") else t.provider._states
     names = [s.provider.name for s in providers]

@@ -33,10 +33,7 @@ function CardTitle({ className, ...props }: React.ComponentProps<'div'>): React.
   )
 }
 
-function CardDescription({
-  className,
-  ...props
-}: React.ComponentProps<'div'>): React.JSX.Element {
+function CardDescription({ className, ...props }: React.ComponentProps<'div'>): React.JSX.Element {
   return (
     <div
       data-slot="card-description"
@@ -51,9 +48,7 @@ function CardContent({ className, ...props }: React.ComponentProps<'div'>): Reac
 }
 
 function CardFooter({ className, ...props }: React.ComponentProps<'div'>): React.JSX.Element {
-  return (
-    <div data-slot="card-footer" className={cn('flex items-center', className)} {...props} />
-  )
+  return <div data-slot="card-footer" className={cn('flex items-center', className)} {...props} />
 }
 
 export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent }

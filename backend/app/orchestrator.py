@@ -66,33 +66,45 @@ async def download_to_epub(
         from app.translation.factory import build_translator
         build_translator(target_language=translate_to)  # só valida configs
 
-    async with HttpClient() as client:
-        adapter = registry.resolve(url, client)
-        # Sinaliza pra UI que estamos buscando metadados ANTES de fetch_novel —
-        # adapters como NovelFull paginam a TOC (~60 paginas) e nesse intervalo
-        # o usuario fica olhando "0%" sem nada. Mostra ao menos o nome do adapter.
-        if progress:
-            progress("meta", 0, 0, f"Buscando lista de capítulos em {adapter.name}…", False)
-            # Adapters que paginam podem reportar progresso granular ("pg 12/66")
-            # via este callback opcional — propagamos pra mesma UI.
-            adapter.on_meta_progress = lambda done, total, label: progress(
-                "meta", done, total, label, False
-            )
-        meta = await adapter.fetch_novel(url)
+    collected: list[ChapterContent] = []
+    cached_count = 0
+    download_failures: list[dict] = []
+    cover = None
+    skip_set = set(skip_chapters or [])
+
+    is_epub = url.startswith("epub://")
+    if is_epub:
+        from sqlalchemy import select
+        from app.db import models as orm
+        from app.db.database import get_session
+        from app.epub.reader import load_local_epub_cover
+
+        slug_hint = url.removeprefix("epub://")
+        with get_session() as s:
+            novel_row = s.scalar(select(orm.Novel).where(orm.Novel.source_url == url))
+            if novel_row is None:
+                novel_row = s.scalar(
+                    select(orm.Novel).where(
+                        orm.Novel.source == "epub", orm.Novel.slug == slug_hint
+                    )
+                )
+        if novel_row is None:
+            raise RuntimeError(f"novel EPUB nao encontrada no cache: {url}")
+
+        novel_id = novel_row.id
+        slug = novel_row.slug
+        meta = NovelMeta(
+            title=novel_row.title,
+            source_url=novel_row.source_url,
+            slug=slug,
+            author=novel_row.author,
+            cover_url=novel_row.cover_url,
+            description=novel_row.description,
+            chapters=[],
+        )
         if on_meta:
             on_meta(meta)
 
-        slug = meta.slug or slugify(meta.title)
-        novel_id = cache.upsert_novel(adapter.name, slug, meta)
-
-        # Escolha explicita de estilo vira o default desta novel (pre-selecionado
-        # nas proximas capturas/regerar). "Automatico" (cover_style=None) NAO mexe
-        # no default salvo — evita que fluxos como "traduzir no lugar" (que reusam
-        # ai_cover mas nao passam estilo) apaguem a preferencia do usuario.
-        if cover_style:
-            cache.set_default_cover_style(novel_id, cover_style)
-
-        # Translator real ja com novel_id+volume_title (cascade usa pra pin)
         translator = None
         if translate_to:
             from app.translation.factory import build_translator
@@ -101,158 +113,209 @@ async def download_to_epub(
                 novel_id=novel_id, volume_title=volume_title,
             )
 
-        # Maior index, nao a contagem: adapters com lacunas na numeracao (ex.:
-        # CSNovels) tem index > len(chapters), e o fim do intervalo cortaria os
-        # ultimos caps. Pra TOC contigua (1..N) da no mesmo.
-        total = max((r.index for r in meta.chapters), default=0)
+        cached_idxs = sorted(cache.cached_indices(novel_id))
+        total = max(cached_idxs, default=0)
         if total == 0:
-            raise RuntimeError(f"nenhum capitulo encontrado em {url}")
+            raise RuntimeError(f"nenhum capitulo em cache para {url}")
         last = total if end is None else min(end, total)
-        skip_set = set(skip_chapters or [])
-        refs = [
-            r for r in meta.chapters if start <= r.index <= last and r.index not in skip_set
-        ]
-        if skip_set:
-            log.info("chapters_skipped", skipped=sorted(skip_set), kept=len(refs))
-        if not refs:
-            raise ValueError(
-                f"intervalo vazio (start={start}, end={end}, total={total})"
-            )
+        target_idxs = [i for i in cached_idxs if start <= i <= last and i not in skip_set]
+        if not target_idxs:
+            raise ValueError(f"intervalo vazio (start={start}, end={end}, total={total})")
 
-        # ---- Fallback por mirror (Fatia 4) ----
-        # Fontes alternativas desta novel. So sao tocadas se o primario falhar num
-        # capitulo; a TOC de cada mirror e baixada UMA vez (lazy) e cacheada por
-        # numero canonico de titulo — e por esse numero que casamos o cap entre
-        # sites (a posicao diverge por off-by-N, o numero no titulo nao).
-        mirror_configs = MirrorStore().list_for_novel(novel_id)
-        mirror_adapters: dict[str, object] = {}
-        mirror_tocs: dict[str, dict[int, ChapterRef]] = {}
-        # Mirrors cuja TOC nao deu pra obter (site bloqueado, obra paga, fora do
-        # ar). Ficam de fora pelo resto do job: sem isso, CADA capitulo que
-        # falhasse no primario re-baixava a TOC inteira do mirror (~60 paginas
-        # no NovelFull) so pra falhar de novo.
-        dead_mirrors: set[str] = set()
-
-        async def fetch_from_mirrors(ref: ChapterRef) -> tuple[ChapterContent, str] | None:
-            """Tenta recuperar `ref` de cada mirror, casando por numero de titulo.
-            Devolve (conteudo, nome_da_fonte) no 1o sucesso, ou None."""
-            if ref.number is None or not mirror_configs:
-                return None  # sem numero canonico nao da pra casar com seguranca
-            for cfg in mirror_configs:
-                m_url = cfg["source_url"]
-                if m_url in dead_mirrors:
-                    continue
-                try:
-                    adapter_m = mirror_adapters.get(m_url)
-                    if adapter_m is None:
-                        adapter_m = registry.resolve(m_url, client)
-                        mirror_adapters[m_url] = adapter_m
-                    toc = mirror_tocs.get(m_url)
-                    if toc is None:
-                        meta_m = await adapter_m.fetch_novel(m_url)
-                        toc = {
-                            r.number: r for r in meta_m.chapters if r.number is not None
-                        }
-                        mirror_tocs[m_url] = toc
-                except Exception as exc:
-                    dead_mirrors.add(m_url)
-                    log.warning(
-                        "mirror_unavailable", mirror=m_url, error=str(exc)[:200]
-                    )
-                    continue
-                try:
-                    target = toc.get(ref.number)
-                    if target is None:
-                        continue  # esse mirror nao tem esse numero
-                    content = await adapter_m.fetch_chapter(target)
-                    # Grava no slot do PRIMARIO (index), nao no do mirror.
-                    content.index = ref.index
-                    return content, cfg["source"]
-                except Exception as exc:
-                    log.warning(
-                        "mirror_fetch_failed",
-                        mirror=m_url,
-                        chapter=ref.number,
-                        error=str(exc)[:200],
-                    )
-                    continue
-            return None
-
-        # ---- Fase 1: download / cache ----
-        collected: list[ChapterContent] = []
-        cached_count = 0
-        # Capitulos que nao deram pra baixar (404, DOM mudou, mirror quebrado...).
-        # Em vez de derrubar o job inteiro — um cap quebrado != volume perdido —
-        # registramos, pulamos e seguimos, igual as falhas de traducao. O EPUB sai
-        # com o que deu certo e a UI mostra o que faltou (e por que). E a base do
-        # fallback por mirror (Fatia 4): "se falhou aqui, tenta noutra fonte".
-        download_failures: list[dict] = []
-        for done, ref in enumerate(refs, start=1):
-            chapter = cache.get_chapter(novel_id, ref.index)
-            from_cache = chapter is not None
-            label = ref.title
-            if chapter is None:
-                try:
-                    chapter = await adapter.fetch_chapter(ref)
-                except Exception as primary_exc:
-                    # Primario falhou: tenta recuperar de uma fonte alternativa
-                    # casando pelo numero canonico do titulo (Fatia 4).
-                    recovered = await fetch_from_mirrors(ref)
-                    if recovered is None:
-                        reason = str(primary_exc)[:500] or primary_exc.__class__.__name__
-                        log.warning(
-                            "chapter_download_failed",
-                            chapter=ref.index,
-                            url=ref.url,
-                            error=reason,
-                        )
-                        download_failures.append(
-                            {"chapter": ref.index, "title": ref.title, "reason": reason}
-                        )
-                        if progress:
-                            progress(
-                                "download",
-                                done,
-                                len(refs),
-                                f"{ref.title} (falha — pulado)",
-                                False,
-                            )
-                        continue
-                    chapter, via = recovered
-                    label = f"{ref.title} · via {via}"
-                    log.info(
-                        "chapter_recovered_via_mirror",
-                        chapter=ref.index,
-                        number=ref.number,
-                        mirror=via,
-                    )
-                cache.save_chapter(novel_id, chapter)
-            else:
-                cached_count += 1
-            collected.append(chapter)
+        for done, idx in enumerate(target_idxs, start=1):
+            ch = cache.get_chapter(novel_id, idx)
+            if ch is None:
+                continue
+            collected.append(ch)
+            cached_count += 1
             if progress:
-                progress("download", done, len(refs), label, from_cache)
+                progress("download", done, len(target_idxs), ch.title, True)
 
         if not collected:
-            # Todos falharam: sem isto o build geraria um EPUB vazio.
-            raise RuntimeError(
-                f"nenhum capitulo pôde ser baixado ({len(download_failures)} falharam)"
-            )
-        if download_failures:
-            log.warning(
-                "download_partial",
-                failed_chapters=[f["chapter"] for f in download_failures],
-                failed_count=len(download_failures),
-                total=len(refs),
-            )
+            raise RuntimeError(f"nenhum capitulo carregado para {url}")
 
-        cover = None
-        # Mesmo se ai_cover, baixa a raspada como fallback caso a IA falhe.
-        if (with_cover or ai_cover) and meta.cover_url:
-            try:
-                cover = await client.get_bytes(meta.cover_url)
-            except Exception as exc:  # capa e opcional; nao aborta o EPUB
-                log.warning("cover_failed", url=meta.cover_url, error=str(exc))
+        if with_cover or ai_cover:
+            got = load_local_epub_cover(novel_id, volume_title)
+            if got is not None:
+                cover = got[0]
+    else:
+        async with HttpClient() as client:
+            adapter = registry.resolve(url, client)
+            # Sinaliza pra UI que estamos buscando metadados ANTES de fetch_novel —
+            # adapters como NovelFull paginam a TOC (~60 paginas) e nesse intervalo
+            # o usuario fica olhando "0%" sem nada. Mostra ao menos o nome do adapter.
+            if progress:
+                progress("meta", 0, 0, f"Buscando lista de capítulos em {adapter.name}…", False)
+                # Adapters que paginam podem reportar progresso granular ("pg 12/66")
+                # via este callback opcional — propagamos pra mesma UI.
+                adapter.on_meta_progress = lambda done, total, label: progress(
+                    "meta", done, total, label, False
+                )
+            meta = await adapter.fetch_novel(url)
+            if on_meta:
+                on_meta(meta)
+
+            slug = meta.slug or slugify(meta.title)
+            novel_id = cache.upsert_novel(adapter.name, slug, meta)
+
+            # Escolha explicita de estilo vira o default desta novel (pre-selecionado
+            # nas proximas capturas/regerar). "Automatico" (cover_style=None) NAO mexe
+            # no default salvo — evita que fluxos como "traduzir no lugar" (que reusam
+            # ai_cover mas nao passam estilo) apaguem a preferencia do usuario.
+            if cover_style:
+                cache.set_default_cover_style(novel_id, cover_style)
+
+            # Translator real ja com novel_id+volume_title (cascade usa pra pin)
+            translator = None
+            if translate_to:
+                from app.translation.factory import build_translator
+                translator = build_translator(
+                    target_language=translate_to,
+                    novel_id=novel_id, volume_title=volume_title,
+                )
+
+            # Maior index, nao a contagem: adapters com lacunas na numeracao (ex.:
+            # CSNovels) tem index > len(chapters), e o fim do intervalo cortaria os
+            # ultimos caps. Pra TOC contigua (1..N) da no mesmo.
+            total = max((r.index for r in meta.chapters), default=0)
+            if total == 0:
+                raise RuntimeError(f"nenhum capitulo encontrado em {url}")
+            last = total if end is None else min(end, total)
+            refs = [
+                r for r in meta.chapters if start <= r.index <= last and r.index not in skip_set
+            ]
+            if skip_set:
+                log.info("chapters_skipped", skipped=sorted(skip_set), kept=len(refs))
+            if not refs:
+                raise ValueError(
+                    f"intervalo vazio (start={start}, end={end}, total={total})"
+                )
+
+            # ---- Fallback por mirror (Fatia 4) ----
+            # Fontes alternativas desta novel. So sao tocadas se o primario falhar num
+            # capitulo; a TOC de cada mirror e baixada UMA vez (lazy) e cacheada por
+            # numero canonico de titulo — e por esse numero que casamos o cap entre
+            # sites (a posicao diverge por off-by-N, o numero no titulo nao).
+            mirror_configs = MirrorStore().list_for_novel(novel_id)
+            mirror_adapters: dict[str, object] = {}
+            mirror_tocs: dict[str, dict[int, ChapterRef]] = {}
+            # Mirrors cuja TOC nao deu pra obter (site bloqueado, obra paga, fora do
+            # ar). Ficam de fora pelo resto do job: sem isso, CADA capitulo que
+            # falhasse no primario re-baixava a TOC inteira do mirror (~60 paginas
+            # no NovelFull) so pra falhar de novo.
+            dead_mirrors: set[str] = set()
+
+            async def fetch_from_mirrors(ref: ChapterRef) -> tuple[ChapterContent, str] | None:
+                """Tenta recuperar `ref` de cada mirror, casando por numero de titulo.
+                Devolve (conteudo, nome_da_fonte) no 1o sucesso, ou None."""
+                if ref.number is None or not mirror_configs:
+                    return None  # sem numero canonico nao da pra casar com seguranca
+                for cfg in mirror_configs:
+                    m_url = cfg["source_url"]
+                    if m_url in dead_mirrors:
+                        continue
+                    try:
+                        adapter_m = mirror_adapters.get(m_url)
+                        if adapter_m is None:
+                            adapter_m = registry.resolve(m_url, client)
+                            mirror_adapters[m_url] = adapter_m
+                        toc = mirror_tocs.get(m_url)
+                        if toc is None:
+                            meta_m = await adapter_m.fetch_novel(m_url)
+                            toc = {
+                                r.number: r for r in meta_m.chapters if r.number is not None
+                            }
+                            mirror_tocs[m_url] = toc
+                    except Exception as exc:
+                        dead_mirrors.add(m_url)
+                        log.warning(
+                            "mirror_unavailable", mirror=m_url, error=str(exc)[:200]
+                        )
+                        continue
+                    try:
+                        target = toc.get(ref.number)
+                        if target is None:
+                            continue  # esse mirror nao tem esse numero
+                        content = await adapter_m.fetch_chapter(target)
+                        # Grava no slot do PRIMARIO (index), nao no do mirror.
+                        content.index = ref.index
+                        return content, cfg["source"]
+                    except Exception as exc:
+                        log.warning(
+                            "mirror_fetch_failed",
+                            mirror=m_url,
+                            chapter=ref.number,
+                            error=str(exc)[:200],
+                        )
+                        continue
+                return None
+
+            # ---- Fase 1: download / cache ----
+            for done, ref in enumerate(refs, start=1):
+                chapter = cache.get_chapter(novel_id, ref.index)
+                from_cache = chapter is not None
+                label = ref.title
+                if chapter is None:
+                    try:
+                        chapter = await adapter.fetch_chapter(ref)
+                    except Exception as primary_exc:
+                        # Primario falhou: tenta recuperar de uma fonte alternativa
+                        # casando pelo numero canonico do titulo (Fatia 4).
+                        recovered = await fetch_from_mirrors(ref)
+                        if recovered is None:
+                            reason = str(primary_exc)[:500] or primary_exc.__class__.__name__
+                            log.warning(
+                                "chapter_download_failed",
+                                chapter=ref.index,
+                                url=ref.url,
+                                error=reason,
+                            )
+                            download_failures.append(
+                                {"chapter": ref.index, "title": ref.title, "reason": reason}
+                            )
+                            if progress:
+                                progress(
+                                    "download",
+                                    done,
+                                    len(refs),
+                                    f"{ref.title} (falha — pulado)",
+                                    False,
+                                )
+                            continue
+                        chapter, via = recovered
+                        label = f"{ref.title} · via {via}"
+                        log.info(
+                            "chapter_recovered_via_mirror",
+                            chapter=ref.index,
+                            number=ref.number,
+                            mirror=via,
+                        )
+                    cache.save_chapter(novel_id, chapter)
+                else:
+                    cached_count += 1
+                collected.append(chapter)
+                if progress:
+                    progress("download", done, len(refs), label, from_cache)
+
+            if not collected:
+                # Todos falharam: sem isto o build geraria um EPUB vazio.
+                raise RuntimeError(
+                    f"nenhum capitulo pôde ser baixado ({len(download_failures)} falharam)"
+                )
+            if download_failures:
+                log.warning(
+                    "download_partial",
+                    failed_chapters=[f["chapter"] for f in download_failures],
+                    failed_count=len(download_failures),
+                    total=len(refs),
+                )
+
+            # Mesmo se ai_cover, baixa a raspada como fallback caso a IA falhe.
+            if (with_cover or ai_cover) and meta.cover_url:
+                try:
+                    cover = await client.get_bytes(meta.cover_url)
+                except Exception as exc:  # capa e opcional; nao aborta o EPUB
+                    log.warning("cover_failed", url=meta.cover_url, error=str(exc))
 
     # ---- Fase 2: traducao (opcional) ----
     translated_count = 0
@@ -265,6 +328,13 @@ async def download_to_epub(
         translated: list[ChapterContent] = []
         for done, ch in enumerate(collected, start=1):
             try:
+                chunk_cb = (
+                    (lambda d=done, title=ch.title: lambda ci, tot: progress(
+                        "translate", d - 1, len(collected), f"{title} (parte {ci}/{tot})", False
+                    ))()
+                    if progress
+                    else None
+                )
                 t_title, t_html, was_cached = await translator.translate(
                     novel_id=novel_id,
                     novel_title=meta.title,
@@ -272,6 +342,8 @@ async def download_to_epub(
                     chapter_index=ch.index,
                     chapter_title=ch.title,
                     chapter_html=ch.html,
+                    on_chunk_progress=chunk_cb if is_epub else None,
+                    allow_chunking=is_epub,
                 )
                 translated.append(
                     ChapterContent(index=ch.index, title=t_title, html=t_html, url=ch.url)

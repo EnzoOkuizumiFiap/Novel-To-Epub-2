@@ -30,7 +30,7 @@ class Novel(Base):
     __table_args__ = (UniqueConstraint("source", "slug", name="uq_novel_source_slug"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    source: Mapped[str] = mapped_column(String(50))  # nome do adapter (ex: "novelbin")
+    source: Mapped[str] = mapped_column(String(50))  # nome do adapter (ex: "novelfull")
     slug: Mapped[str] = mapped_column(String(255))
     title: Mapped[str] = mapped_column(String(500))
     author: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -175,13 +175,11 @@ class AppSettings(Base):
     # --- Traducao (Etapa 5) ---
     gemini_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     target_language: Mapped[str] = mapped_column(String(10), default="pt-BR")
-    translation_model: Mapped[str] = mapped_column(String(50), default="gemini-2.5-flash")
+    translation_model: Mapped[str] = mapped_column(String(50), default="gemini-3.5-flash-lite")
     # --- Cascade (mai 2026) ---
-    groq_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     openrouter_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     cerebras_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Model overrides — None = usa default em factory.DEFAULT_MODELS
-    groq_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     openrouter_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     cerebras_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     # Claude (API da Anthropic)
@@ -191,7 +189,7 @@ class AppSettings(Base):
     cover_brief_provider: Mapped[str] = mapped_column(String(20), default="gemini")
     # CSV de provider names em ordem de preferencia (free primeiro)
     cascade_order: Mapped[str] = mapped_column(
-        String(200), default="groq,openrouter,cerebras,gemini"
+        String(200), default="openrouter,cerebras,gemini,claude"
     )
     # --- Gemini via Vertex AI (mai 2026) ---
     # Quando ligado, o provider gemini usa Vertex AI (autenticado por service
@@ -345,6 +343,37 @@ class TranslatedChapter(Base):
     )
 
 
+class TranslatedChapterChunk(Base):
+    """Cache parcial por bloco de capítulos longos (retomada sem perda em erro/429)."""
+
+    __tablename__ = "translated_chapter_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "novel_id",
+            "chapter_index",
+            "language",
+            "chunk_index",
+            name="uq_translated_chunk",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    novel_id: Mapped[int] = mapped_column(
+        ForeignKey("novels.id", ondelete="CASCADE"), index=True
+    )
+    chapter_index: Mapped[int] = mapped_column(Integer)
+    language: Mapped[str] = mapped_column(String(10))
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    total_chunks: Mapped[int] = mapped_column(Integer)
+    chunk_hash: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    html: Mapped[str] = mapped_column(Text)
+    model: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class VolumeStyleProfile(Base):
     """Perfil de estilo do volume — extraído na 1ª tradução, passado nas próximas.
 
@@ -394,7 +423,7 @@ class VolumeTranslatorPin(Base):
     # "" pra volume sem titulo (igual cover_cache)
     volume_title: Mapped[str] = mapped_column(String(500), default="")
     language: Mapped[str] = mapped_column(String(10))
-    provider: Mapped[str] = mapped_column(String(40))  # "gemini" | "groq" | ...
+    provider: Mapped[str] = mapped_column(String(40))  # "openrouter" | "cerebras" | "gemini" | "claude"
     model: Mapped[str] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -412,7 +441,7 @@ class GeminiUsage(Base):
     )
     # ex: "translate_chapter", "cover_brief", "cover_image"
     op: Mapped[str] = mapped_column(String(40), index=True)
-    # Provider lógico: "gemini" | "groq" | "openrouter" | "cerebras" | etc.
+    # Provider lógico: "openrouter" | "cerebras" | "gemini" | "claude"
     # Nullable pra retro-compat com registros antigos (inferido de model nas queries).
     provider: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
     model: Mapped[str] = mapped_column(String(80))
@@ -422,7 +451,7 @@ class GeminiUsage(Base):
     # Custo em USD calculado no momento via tabela em translation/pricing.py.
     cost_usd: Mapped[float] = mapped_column(default=0.0)
     # Quando provider falhou no cascade: erro humano-legivel (HTTP status + body).
-    # NULL = chamada bem sucedida. Permite ver no diagnostico POR QUE o Groq
+    # NULL = chamada bem sucedida. Permite ver no diagnostico POR QUE o provider
     # caiu sem ter que olhar logs do backend.
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

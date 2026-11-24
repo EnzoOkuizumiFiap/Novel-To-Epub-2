@@ -4,14 +4,7 @@ import { Book } from '@renderer/components/decorative/Book'
 import { Logo } from '@renderer/components/decorative/Logo'
 
 // 'about' não aparece na lista da sidebar — abre clicando no logo (landing/sobre).
-export type View =
-  | 'about'
-  | 'new'
-  | 'downloads'
-  | 'library'
-  | 'glossary'
-  | 'usage'
-  | 'settings'
+export type View = 'about' | 'new' | 'downloads' | 'library' | 'glossary' | 'usage' | 'settings'
 
 interface NavItem {
   id: Exclude<View, 'about'>

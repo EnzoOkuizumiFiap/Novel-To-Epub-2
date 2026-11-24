@@ -1,14 +1,15 @@
 # Novel-to-EPUB
 
-> A web novel scraper that builds full `.epub` files — with AI translation,
-> AI-generated covers, Kindle delivery and a desktop UI.
+> A web novel scraper & local `.epub` translator — with AI translation,
+> character/style memory, AI-generated covers, Kindle delivery and a desktop UI.
 
 🇬🇧 English · [🇧🇷 Português (BR)](README.md) (full version)
 
-Paste a novel URL, pick a chapter range, and the app downloads, optionally
-translates, optionally generates a cover, builds the EPUB, and (if you want)
-emails it straight to your Kindle. Everything runs locally. The SQLite cache
-makes sure nothing is downloaded twice.
+Paste a novel URL **or** import a local `.epub` file, pick a chapter range, and
+the app downloads/reads, optionally translates, optionally generates a cover,
+builds the final EPUB, and (if you want) emails it straight to your Kindle.
+Everything runs locally. The SQLite cache makes sure nothing is downloaded twice
+and allows pausing and resuming mid-volume.
 
 **Stack:** Python 3.10+ (FastAPI + Typer CLI) · Electron 39 + React 19 + Tailwind 4 · SQLite
 
@@ -36,23 +37,31 @@ I read web novels (Shadow Slave, Lord of the Mysteries, Supreme Magus) and
 wanted to read them on Kindle. Stitching together caps with ad-laden
 chapter pages was painful. So: pick range → click → EPUB.
 
-It does PT-BR translation via a multi-provider AI cascade (Groq → OpenRouter →
-Cerebras → Gemini, with retry/fallback) and keeps proper nouns consistent
-through an auto-built glossary across hundreds of chapters.
+It does PT-BR translation via a multi-provider AI cascade (`OpenRouter (:free) →
+Cerebras → Gemini → Claude`, with retry/fallback, an OpenRouter free-only guard,
+and per-provider chunking for long local EPUBs) and keeps proper nouns and tone
+consistent through an auto-built glossary, style profile, and rolling anchor.
 
 ---
 
 ## Features
 
-- **Multi-site** via Strategy pattern + auto-discovery — adding a new site is
-  one file in `backend/app/scraper/adapters/`.
-- **SQLite chapter cache** — re-running a novel hits zero network.
-- **Full EPUB** — cover, metadata, navigable TOC, paginated volumes.
-- **AI translation cascade** with auto glossary persistence — "Yun Che" stays
-  "Yun Che" across 1000 caps.
-- **AI cover** (Gemini Image) — visual brief from first chapters + editorial
-  typography composited via Pillow.
-- **Kindle delivery** via SMTP.
+- **Multi-site + local `.epub` import** via Strategy pattern + auto-discovery —
+  adding a new site is one file in `backend/app/scraper/adapters/`, while local
+  EPUBs can be previewed, grouped into existing series, and translated in place.
+- **SQLite cache + Pause & Resume** — downloaded chapters, translations, and
+  partial chunk checkpoints are stored locally so pausing mid-chapter resumes
+  cleanly without redoing completed parts.
+- **Full EPUB** — cover (scraped, extracted, or AI-generated), metadata,
+  navigable TOC, paginated volumes.
+- **AI translation cascade** with OpenRouter free-only protection, auto glossary
+  persistence, and expanded continuation context for chunked EPUB chapters.
+- **Cost & Token dashboard** — tracks R$/USD estimates as well as input/output
+  token counts per day, provider, and novel (including free tiers).
+- **AI cover** (Gemini Image, brief via Gemini or Claude) — visual brief from
+  first chapters + editorial typography composited via Pillow.
+- **Kindle delivery** via SMTP & **1-click Windows launcher**
+  ([`Iniciar Novel-to-EPUB.bat`](Iniciar%20Novel-to-EPUB.bat)).
 - **Concurrent TOC pagination** for adapters with paginated chapter lists
   (NovelFull has 66 pages — sequential would take ~130s, concurrent does it
   in ~5s).
@@ -68,7 +77,6 @@ through an auto-built glossary across hundreds of chapters.
 | Royal Road   | `royalroad.com`                                               | ✅ Ready    |
 | CSNovels     | `csnovels.com` (free works only)                              | ✅ Ready    |
 | WuxiaWorldEU | `wuxiaworld.eu` (not wuxiaworld.com)                          | ✅ Ready (volumes detected) |
-| NovelBin     | `novelbin.*`                                                  | ⛔ Disabled — domains down since 2026-08 |
 
 Don't see your site? Open an
 [adapter request](.github/ISSUE_TEMPLATE/adapter_request.md) — or write the
@@ -84,7 +92,7 @@ EPUB in 3 commands, no translation:
 git clone https://github.com/LucasrsRodrigues/Novel-To-Epub.git
 cd Novel-To-Epub
 make install
-make download URL=https://novelbin.com/b/lord-of-mysteries START=1 END=10
+make download URL=https://novelfull.net/lord-of-the-mysteries.html START=1 END=10
 ```
 
 EPUB lands in `backend/data/epubs/`. For the GUI + translation + Kindle
@@ -103,7 +111,8 @@ Grab the `.dmg` from
 
 Verify the SHA256 against the release page.
 
-Linux/Windows: source-only for now — `make build-electron` works.
+Linux: source-only (`make build-electron` works). Windows: double-click
+[`Iniciar Novel-to-EPUB.bat`](Iniciar%20Novel-to-EPUB.bat) or run `make build-electron`.
 
 ---
 

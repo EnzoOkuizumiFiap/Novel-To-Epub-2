@@ -24,7 +24,15 @@ export function Stamp({
         <path id="stamp-curve-top" d="M 50 50 m -38 0 a 38 38 0 1 1 76 0" />
       </defs>
       <circle cx="50" cy="50" r="46" fill="none" stroke="var(--stamp-red)" strokeWidth="1.2" />
-      <circle cx="50" cy="50" r="42" fill="none" stroke="var(--stamp-red)" strokeWidth="0.6" opacity="0.7" />
+      <circle
+        cx="50"
+        cy="50"
+        r="42"
+        fill="none"
+        stroke="var(--stamp-red)"
+        strokeWidth="0.6"
+        opacity="0.7"
+      />
       <text
         fontFamily="'Geist Variable', sans-serif"
         fontSize="6.2"

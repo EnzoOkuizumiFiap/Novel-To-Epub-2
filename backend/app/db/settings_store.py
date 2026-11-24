@@ -17,10 +17,8 @@ _FIELDS = (
     "target_language",
     "translation_model",
     # Cascade providers
-    "groq_api_key",
     "openrouter_api_key",
     "cerebras_api_key",
-    "groq_model",
     "openrouter_model",
     "cerebras_model",
     "claude_api_key",

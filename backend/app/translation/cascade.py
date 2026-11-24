@@ -15,6 +15,7 @@ reseta o ratelimit lá tb por causa do tempo decorrido).
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -38,7 +39,22 @@ log = get_logger("cascade")
 # o provider preso por muito tempo. Se o response trouxer header Retry-After,
 # ele tem precedência (provider sabe melhor que nós quando reset).
 RATE_LIMIT_COOLDOWN = timedelta(seconds=90)
+DAILY_LIMIT_COOLDOWN = timedelta(seconds=600)
 SERVER_ERROR_COOLDOWN = timedelta(seconds=30)
+MAX_AUTO_WAIT_S = 95
+MAX_COOLDOWN_WAITS = 2
+
+_DAILY_LIMIT_MARKERS = (
+    "tokens per day",
+    "requests per day",
+    "free-models-per-day",
+    "daily limit",
+)
+
+
+def _is_daily_limit(exc: Exception) -> bool:
+    low = str(exc).lower()
+    return any(m in low for m in _DAILY_LIMIT_MARKERS)
 
 
 @dataclass
@@ -121,134 +137,157 @@ class CascadeTranslator(TranslationProvider):
         style_profile_block: str = "",
         style_anchor_block: str = "",
     ) -> TranslationResult:
-        order = self._ordered_for(target_language)
         last_exc: Exception | None = None
 
-        for state in order:
-            if state.in_cooldown():
-                log.debug(
-                    "cascade_skip_cooldown",
-                    provider=state.provider.name,
-                    cooldown_until=state.cooldown_until.isoformat() if state.cooldown_until else None,
-                )
-                continue
-            try:
-                log.info(
-                    "cascade_trying",
-                    provider=state.provider.name, model=state.provider.model,
-                    chapter=chapter_index,
-                )
-                result = await state.provider.translate_chapter(
-                    text_html=text_html,
-                    chapter_title=chapter_title,
-                    target_language=target_language,
-                    glossary=glossary,
-                    novel_title=novel_title,
-                    novel_slug=novel_slug,
-                    chapter_index=chapter_index,
-                    style_profile_block=style_profile_block,
-                    style_anchor_block=style_anchor_block,
-                )
-                # Sucesso: pin (idempotente — preserva 1º) + limpa cooldown
-                if self._novel_id is not None:
-                    self._pin_store.set(
-                        novel_id=self._novel_id,
-                        volume_title=self._volume_title,
-                        language=target_language,
+        for wait_pass in range(1 + MAX_COOLDOWN_WAITS):
+            order = self._ordered_for(target_language)
+            for state in order:
+                if state.in_cooldown():
+                    log.debug(
+                        "cascade_skip_cooldown",
                         provider=state.provider.name,
-                        model=state.provider.model,
+                        cooldown_until=state.cooldown_until.isoformat() if state.cooldown_until else None,
                     )
-                state.cooldown_until = None
-                state.last_error = None
-                return result
+                    continue
+                try:
+                    log.info(
+                        "cascade_trying",
+                        provider=state.provider.name, model=state.provider.model,
+                        chapter=chapter_index,
+                    )
+                    result = await state.provider.translate_chapter(
+                        text_html=text_html,
+                        chapter_title=chapter_title,
+                        target_language=target_language,
+                        glossary=glossary,
+                        novel_title=novel_title,
+                        novel_slug=novel_slug,
+                        chapter_index=chapter_index,
+                        style_profile_block=style_profile_block,
+                        style_anchor_block=style_anchor_block,
+                    )
+                    # Sucesso: pin (idempotente — preserva 1º) + limpa cooldown
+                    if self._novel_id is not None:
+                        self._pin_store.set(
+                            novel_id=self._novel_id,
+                            volume_title=self._volume_title,
+                            language=target_language,
+                            provider=state.provider.name,
+                            model=state.provider.model,
+                        )
+                    state.cooldown_until = None
+                    state.last_error = None
+                    return result
 
-            except OpenAICompatTranslationError as exc:
-                last_exc = exc
-                state.last_error = str(exc)[:200]
-                self._record_failure(state, chapter_index, exc)
-                code = exc.status_code
-                # Retry-After do provider TEM PRIORIDADE sobre defaults nossos
-                retry_after = getattr(exc, "retry_after_s", None)
-                # 413 (request too large) do Groq = TPM-per-minute excedido,
-                # mesma natureza de 429: reset em ~60s.
-                if code in (429, 413):
-                    duration = (
-                        timedelta(seconds=retry_after) if retry_after
-                        else RATE_LIMIT_COOLDOWN
-                    )
-                    state.cooldown_until = datetime.now(timezone.utc) + duration
+                except OpenAICompatTranslationError as exc:
+                    last_exc = exc
+                    state.last_error = str(exc)[:200]
+                    self._record_failure(state, chapter_index, exc)
+                    code = exc.status_code
+                    # Retry-After do provider TEM PRIORIDADE sobre defaults nossos
+                    retry_after = getattr(exc, "retry_after_s", None)
+                    # 413 (request too large) = limite de tokens excedido,
+                    # mesma natureza de 429: reset em ~60s.
+                    if code in (429, 413):
+                        if _is_daily_limit(exc):
+                            secs = max(retry_after or 0.0, DAILY_LIMIT_COOLDOWN.total_seconds())
+                            duration = timedelta(seconds=secs)
+                        else:
+                            duration = (
+                                timedelta(seconds=retry_after) if retry_after
+                                else RATE_LIMIT_COOLDOWN
+                            )
+                        state.cooldown_until = datetime.now(timezone.utc) + duration
+                        log.warning(
+                            "cascade_provider_ratelimited",
+                            provider=state.provider.name, chapter=chapter_index,
+                            code=code, cooldown_s=int(duration.total_seconds()),
+                            from_header=retry_after is not None,
+                        )
+                    elif code is not None and code >= 500:
+                        duration = (
+                            timedelta(seconds=retry_after) if retry_after
+                            else SERVER_ERROR_COOLDOWN
+                        )
+                        state.cooldown_until = datetime.now(timezone.utc) + duration
+                        log.warning(
+                            "cascade_provider_server_error",
+                            provider=state.provider.name, chapter=chapter_index,
+                            code=code, cooldown_s=int(duration.total_seconds()),
+                        )
+                    else:
+                        # Erro do provider mas não dá pra recuperar com cooldown
+                        # (parse fail, schema invalid, etc) — pula sem marcar tempo
+                        log.warning(
+                            "cascade_provider_other_error",
+                            provider=state.provider.name, chapter=chapter_index,
+                            error=state.last_error,
+                        )
+                    continue
+
+                except GeminiContentBlockedError as exc:
+                    # Bloqueio de conteúdo: PERMANENTE p/ este cap e NÃO reflete saúde
+                    # do provider. Por isso NÃO marca cooldown — senão o Gemini ficaria
+                    # "frio" e os capítulos seguintes (que traduziriam normal) seriam
+                    # pulados. Tenta o próximo provider; se ninguém traduzir, o cap cai
+                    # p/ edição manual (orchestrator mantém em EN + UI rotula pela msg).
+                    last_exc = exc
+                    state.last_error = str(exc)[:200]
+                    self._record_failure(state, chapter_index, exc)
                     log.warning(
-                        "cascade_provider_ratelimited",
-                        provider=state.provider.name, chapter=chapter_index,
-                        code=code, cooldown_s=int(duration.total_seconds()),
-                        from_header=retry_after is not None,
-                    )
-                elif code is not None and code >= 500:
-                    duration = (
-                        timedelta(seconds=retry_after) if retry_after
-                        else SERVER_ERROR_COOLDOWN
-                    )
-                    state.cooldown_until = datetime.now(timezone.utc) + duration
-                    log.warning(
-                        "cascade_provider_server_error",
-                        provider=state.provider.name, chapter=chapter_index,
-                        code=code, cooldown_s=int(duration.total_seconds()),
-                    )
-                else:
-                    # Erro do provider mas não dá pra recuperar com cooldown
-                    # (parse fail, schema invalid, etc) — pula sem marcar tempo
-                    log.warning(
-                        "cascade_provider_other_error",
+                        "cascade_provider_content_blocked",
                         provider=state.provider.name, chapter=chapter_index,
                         error=state.last_error,
                     )
-                continue
+                    continue
 
-            except GeminiContentBlockedError as exc:
-                # Bloqueio de conteúdo: PERMANENTE p/ este cap e NÃO reflete saúde
-                # do provider. Por isso NÃO marca cooldown — senão o Gemini ficaria
-                # "frio" e os capítulos seguintes (que traduziriam normal) seriam
-                # pulados. Tenta o próximo provider; se ninguém traduzir, o cap cai
-                # p/ edição manual (orchestrator mantém em EN + UI rotula pela msg).
-                last_exc = exc
-                state.last_error = str(exc)[:200]
-                self._record_failure(state, chapter_index, exc)
-                log.warning(
-                    "cascade_provider_content_blocked",
-                    provider=state.provider.name, chapter=chapter_index,
-                    error=state.last_error,
-                )
-                continue
+                except GeminiTranslationError as exc:
+                    # Erros do Gemini provider (que já vem com retry interno esgotado).
+                    # Trata como retryable temporário → cooldown curto.
+                    last_exc = exc
+                    state.last_error = str(exc)[:200]
+                    self._record_failure(state, chapter_index, exc)
+                    state.cooldown_until = datetime.now(timezone.utc) + SERVER_ERROR_COOLDOWN
+                    log.warning(
+                        "cascade_provider_gemini_error",
+                        provider=state.provider.name, chapter=chapter_index,
+                        error=state.last_error,
+                    )
+                    continue
 
-            except GeminiTranslationError as exc:
-                # Erros do Gemini provider (que já vem com retry interno esgotado).
-                # Trata como retryable temporário → cooldown curto.
-                last_exc = exc
-                state.last_error = str(exc)[:200]
-                self._record_failure(state, chapter_index, exc)
-                state.cooldown_until = datetime.now(timezone.utc) + SERVER_ERROR_COOLDOWN
-                log.warning(
-                    "cascade_provider_gemini_error",
-                    provider=state.provider.name, chapter=chapter_index,
-                    error=state.last_error,
-                )
-                continue
+                except Exception as exc:
+                    # Imprevisto — não marca cooldown (pode ser bug nosso), só pula
+                    last_exc = exc
+                    state.last_error = str(exc)[:200]
+                    self._record_failure(state, chapter_index, exc)
+                    log.warning(
+                        "cascade_provider_unexpected",
+                        provider=state.provider.name, chapter=chapter_index,
+                        error_type=type(exc).__name__, error=state.last_error,
+                    )
+                    continue
 
-            except Exception as exc:
-                # Imprevisto — não marca cooldown (pode ser bug nosso), só pula
-                last_exc = exc
-                state.last_error = str(exc)[:200]
-                self._record_failure(state, chapter_index, exc)
-                log.warning(
-                    "cascade_provider_unexpected",
-                    provider=state.provider.name, chapter=chapter_index,
-                    error_type=type(exc).__name__, error=state.last_error,
-                )
+            now = datetime.now(timezone.utc)
+            cooldown_states = [s for s in order if s.in_cooldown()]
+            soonest_s = (
+                int(min((s.cooldown_until - now).total_seconds() for s in cooldown_states if s.cooldown_until))
+                if cooldown_states
+                else None
+            )
+            if (
+                wait_pass < MAX_COOLDOWN_WAITS
+                and soonest_s is not None
+                and soonest_s <= MAX_AUTO_WAIT_S
+            ):
+                wait_s = max(1, soonest_s + 1)
+                log.info("cascade_waiting_cooldown", chapter=chapter_index, wait_s=wait_s)
+                await asyncio.sleep(wait_s)
                 continue
+            break
 
         # Esgotou — mensagem inclui ETA dos cooldowns pra UI saber quando "Continuar" funciona
         now = datetime.now(timezone.utc)
-        cooldown_states = [s for s in order if s.in_cooldown()]
+        cooldown_states = [s for s in self._states if s.in_cooldown()]
         soonest_s = None
         if cooldown_states:
             soonest_s = int(min(
@@ -272,7 +311,7 @@ class CascadeTranslator(TranslationProvider):
             )
         log.error(
             "cascade_exhausted",
-            chapter=chapter_index, providers=len(order),
+            chapter=chapter_index, providers=len(self._states),
             cooldown_count=len(cooldown_states), soonest_s=soonest_s,
         )
         raise CascadeExhaustedError(msg) from last_exc

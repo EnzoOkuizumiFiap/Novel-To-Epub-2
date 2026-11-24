@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { BookOpen, ChevronLeft, Download, ExternalLink, Loader2, Plus, Send } from 'lucide-react'
 import {
   api,
+  resolveMediaUrl,
   type GlossaryEntry,
   type JobStatus,
   type NovelDetail as NovelDetailT,
@@ -23,11 +24,13 @@ export function NovelDetail({
   novelId,
   onBack,
   onCaptureMore,
+  onImportEpub,
   onOpenGlossary
 }: {
   novelId: number
   onBack: () => void
   onCaptureMore: (url: string, coverStyle: string | null) => void
+  onImportEpub?: (novelId: number) => void
   onOpenGlossary: (novelId: number) => void
 }): React.JSX.Element {
   const [novel, setNovel] = useState<NovelDetailT | null>(null)
@@ -35,6 +38,7 @@ export function NovelDetail({
   const [glossary, setGlossary] = useState<GlossaryEntry[] | null>(null)
   const [persistedVolumes, setPersistedVolumes] = useState<VolumeOut[]>([])
   const [showFullDesc, setShowFullDesc] = useState(false)
+  const [failedCoverUrl, setFailedCoverUrl] = useState<string | null>(null)
   const [editorVolume, setEditorVolume] = useState<VolumeOut | null>(null)
   // Idioma-alvo configurado — usado pelo botão "Traduzir" do volume.
   const [targetLang, setTargetLang] = useState('pt-BR')
@@ -266,17 +270,22 @@ export function NovelDetail({
         ].join(' ')}
       >
         <div className="relative shrink-0">
-          {novel.cover_url ? (
-            <img
-              src={novel.cover_url}
-              alt={novel.title}
-              className="h-56 w-40 rounded-md object-cover shadow-[0_4px_14px_rgba(80,50,20,0.32),0_2px_3px_rgba(80,50,20,0.18)]"
-            />
-          ) : (
-            <div className="flex h-56 w-40 items-center justify-center rounded-md bg-[var(--paper-300)]">
-              <BookOpen className="size-10 text-[var(--ink-400)]" />
-            </div>
-          )}
+          {(() => {
+            const coverSrc = resolveMediaUrl(novel.cover_url)
+            const coverFailed = !!coverSrc && failedCoverUrl === coverSrc
+            return coverSrc && !coverFailed ? (
+              <img
+                src={coverSrc}
+                alt={novel.title}
+                onError={() => setFailedCoverUrl(coverSrc)}
+                className="h-56 w-40 rounded-md object-cover shadow-[0_4px_14px_rgba(80,50,20,0.32),0_2px_3px_rgba(80,50,20,0.18)]"
+              />
+            ) : (
+              <div className="flex h-56 w-40 items-center justify-center rounded-md bg-[var(--paper-300)]">
+                <BookOpen className="size-10 text-[var(--ink-400)]" />
+              </div>
+            )
+          })()}
           <Ribbon
             color="var(--bookmark-ribbon)"
             width={18}
@@ -311,17 +320,25 @@ export function NovelDetail({
             </p>
           )}
           <div className="flex flex-wrap items-center gap-2 pt-2">
-            <Button
-              onClick={() => onCaptureMore(novel.source_url, novel.default_cover_style)}
-              size="sm"
-            >
-              <Plus className="size-3.5" /> Capturar mais capítulos
-            </Button>
-            <Button variant="outline" size="sm" asChild>
-              <a href={novel.source_url} target="_blank" rel="noreferrer">
-                <ExternalLink className="size-3.5" /> Fonte
-              </a>
-            </Button>
+            {novel.source === 'epub' ? (
+              <Button onClick={() => onImportEpub?.(novel.id)} size="sm">
+                <Plus className="size-3.5" /> Importar outro volume (.epub)
+              </Button>
+            ) : (
+              <>
+                <Button
+                  onClick={() => onCaptureMore(novel.source_url, novel.default_cover_style)}
+                  size="sm"
+                >
+                  <Plus className="size-3.5" /> Capturar mais capítulos
+                </Button>
+                <Button variant="outline" size="sm" asChild>
+                  <a href={novel.source_url} target="_blank" rel="noreferrer">
+                    <ExternalLink className="size-3.5" /> Fonte
+                  </a>
+                </Button>
+              </>
+            )}
             {novel.wiki_url && (
               <Button variant="outline" size="sm" asChild>
                 <a href={novel.wiki_url} target="_blank" rel="noreferrer">
@@ -444,11 +461,13 @@ export function NovelDetail({
       </section>
 
       {/* Fontes alternativas (mirrors) — resiliência a cap quebrado */}
-      <MirrorsSection
-        novelId={novelId}
-        primarySource={novel.source}
-        primaryUrl={novel.source_url}
-      />
+      {novel.source !== 'epub' && (
+        <MirrorsSection
+          novelId={novelId}
+          primarySource={novel.source}
+          primaryUrl={novel.source_url}
+        />
+      )}
 
       {/* Galeria de capas geradas por IA */}
       <CoverGallery

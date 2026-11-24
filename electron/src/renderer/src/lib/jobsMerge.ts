@@ -23,3 +23,21 @@ export function mergeSnapshot(prev: JobsMap, list: JobStatus[], requestedAt: num
   }
   return next
 }
+
+/**
+ * Calcula percentual de progresso considerando sub-progresso de chunks
+ * quando `job.current` traz "(parte X/Y)" no capítulo atual.
+ */
+export function jobProgressPct(job: JobStatus): number {
+  if (!job.total) return 0
+  let fraction = job.done
+  if (job.current && job.done < job.total) {
+    const m = /\(parte\s+(\d+)\/(\d+)\)/i.exec(job.current)
+    if (m) {
+      const part = Math.max(0, Number(m[1]) - 1)
+      const parts = Number(m[2])
+      if (parts > 0) fraction += Math.min(1, part / parts)
+    }
+  }
+  return Math.min(100, Math.round((fraction / job.total) * 100))
+}

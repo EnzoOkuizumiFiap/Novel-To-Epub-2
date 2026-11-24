@@ -8,12 +8,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/  (este arquivo vive em backend/app/config.py)
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_DIR = BACKEND_DIR / "data"
+
+load_dotenv(BACKEND_DIR / ".env")
 
 # User-Agent realista (Chrome em macOS) para nao parecer bot.
 DEFAULT_USER_AGENT = (

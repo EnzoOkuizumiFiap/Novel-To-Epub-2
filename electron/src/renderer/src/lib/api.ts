@@ -23,7 +23,13 @@ function withToken(url: string): string {
   return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(API_TOKEN)}`
 }
 
-export type JobStatusKind = 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'interrupted' // captura pendente re-hidratada após restart do backend
+export function resolveMediaUrl(url: string | null | undefined): string | null {
+  if (!url) return null
+  if (url.startsWith('/')) return withToken(`${API_BASE}${url}`)
+  return url
+}
+
+type JobStatusKind = 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'interrupted' // captura pendente re-hidratada após restart do backend
 
 export interface TranslationFailure {
   chapter: number
@@ -31,7 +37,7 @@ export interface TranslationFailure {
   reason: string // mensagem da exception (inclui finish_reason/block_reason p/ Gemini)
 }
 
-export interface DownloadFailure {
+interface DownloadFailure {
   chapter: number
   title: string
   reason: string // por que o cap não pôde ser baixado (404, DOM mudou, mirror quebrado)
@@ -64,7 +70,7 @@ export interface JobStatus {
   updated_at: string
 }
 
-export interface DownloadRequest {
+interface DownloadRequest {
   url: string
   start?: number
   end?: number | null
@@ -88,7 +94,7 @@ export interface SiteInfo {
   domains: string[]
 }
 
-export interface VolumePreview {
+interface VolumePreview {
   name: string
   start: number
   end: number
@@ -124,7 +130,7 @@ export interface NovelDetail extends NovelSummary {
   default_cover_style: string | null
 }
 
-export interface AppSettingsView {
+interface AppSettingsView {
   smtp_host: string | null
   smtp_port: number
   smtp_user: string | null
@@ -135,11 +141,9 @@ export interface AppSettingsView {
   gemini_api_key_set: boolean
   target_language: string
   translation_model: string
-  groq_api_key_set: boolean
   openrouter_api_key_set: boolean
   cerebras_api_key_set: boolean
   claude_api_key_set: boolean
-  groq_model: string | null
   openrouter_model: string | null
   cerebras_model: string | null
   claude_model: string | null
@@ -165,10 +169,8 @@ export interface SettingsUpdate {
   gemini_api_key?: string | null
   target_language?: string
   translation_model?: string
-  groq_api_key?: string | null
   openrouter_api_key?: string | null
   cerebras_api_key?: string | null
-  groq_model?: string | null
   openrouter_model?: string | null
   cerebras_model?: string | null
   claude_api_key?: string | null
@@ -248,12 +250,20 @@ export interface UsageSummary {
   last_30d_usd: number
   last_7d_usd: number
   avg_per_chapter_usd: number
+  total_input_tokens: number
+  total_output_tokens: number
+  total_tokens: number
+  last_30d_tokens: number
+  last_7d_tokens: number
 }
 
 export interface UsageDay {
   day: string
   cost_usd: number
   ops: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
 }
 
 export interface UsageByNovel {
@@ -263,12 +273,18 @@ export interface UsageByNovel {
   ops: number
   chapters_translated: number
   covers_generated: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
 }
 
 export interface UsageByProvider {
   provider: string
   total_usd: number
   ops: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
 }
 
 export interface VolumePinInfo {
@@ -281,7 +297,7 @@ export interface VolumePinInfo {
   created_at: string
 }
 
-export interface RecentUsageInfo {
+interface RecentUsageInfo {
   op: string
   provider: string | null
   model: string
@@ -325,6 +341,42 @@ export interface GlossaryCleanupReport {
   applied: boolean
 }
 
+interface EpubChapterPreview {
+  index: number
+  title: string
+  char_count: number
+  paragraph_count: number
+}
+
+export interface EpubPreview {
+  file_path: string
+  title: string
+  series_name: string
+  author: string | null
+  description: string | null
+  language: string | null
+  cover_data_url: string | null
+  total_chapters: number
+  total_chars: number
+  chapters: EpubChapterPreview[]
+  matched_novel_id: number | null
+  matched_novel_title: string | null
+}
+
+interface EpubImportRequest {
+  file_path: string
+  novel_id?: number | null
+  series_title?: string | null
+  volume_title?: string | null
+  start?: number
+  end?: number | null
+  skip_chapters?: number[]
+  with_cover?: boolean
+  translate_to?: string | null
+  ai_cover?: boolean
+  cover_style?: string | null
+}
+
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -352,14 +404,12 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   base: API_BASE,
-  health: () => http<{ status: string; version: string }>('/api/health'),
   sites: () => http<SiteInfo[]>('/api/sites'),
   previewNovel: (url: string) =>
     http<NovelPreview>('/api/preview-novel', { method: 'POST', body: JSON.stringify({ url }) }),
   createDownload: (req: DownloadRequest) =>
     http<JobStatus>('/api/downloads', { method: 'POST', body: JSON.stringify(req) }),
   listDownloads: () => http<JobStatus[]>('/api/downloads'),
-  getDownload: (id: string) => http<JobStatus>(`/api/downloads/${id}`),
   cancelDownload: (id: string) =>
     http<JobStatus>(`/api/downloads/${id}/cancel`, { method: 'POST' }),
   resumeDownload: (id: string) =>
@@ -469,11 +519,43 @@ export const api = {
   usageByNovel: () => http<UsageByNovel[]>('/api/usage/by-novel'),
   usageByProvider: () => http<UsageByProvider[]>('/api/usage/by-provider'),
   translationDebugStatus: () => http<TranslationDebugStatus>('/api/debug/translation-status'),
-  resetVolumeTranslatorPin: (volumeId: number) =>
-    http<void>(`/api/volumes/${volumeId}/translator-pin`, { method: 'DELETE' }),
+  resetNovelTranslatorPin: (novelId: number, volumeTitle: string, language = 'pt-BR') =>
+    http<void>(
+      `/api/library/${novelId}/translator-pin?volume_title=${encodeURIComponent(volumeTitle)}&language=${encodeURIComponent(language)}`,
+      { method: 'DELETE' }
+    ),
   getSettings: () => http<AppSettingsView>('/api/settings'),
   updateSettings: (body: SettingsUpdate) =>
     http<AppSettingsView>('/api/settings', { method: 'PUT', body: JSON.stringify(body) }),
+  uploadEpub: async (file: File): Promise<{ file_path: string; filename: string }> => {
+    const res = await fetch(`${API_BASE}/api/epub/upload`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Filename': encodeURIComponent(file.name),
+        ...(API_TOKEN ? { 'X-Api-Token': API_TOKEN } : {})
+      },
+      body: file
+    })
+    if (!res.ok) {
+      let detail = res.statusText
+      try {
+        const body = await res.json()
+        detail = body.detail ?? detail
+      } catch {
+        // sem json
+      }
+      throw new Error(detail)
+    }
+    return res.json()
+  },
+  previewEpub: (filePath: string) =>
+    http<EpubPreview>('/api/epub/preview', {
+      method: 'POST',
+      body: JSON.stringify({ file_path: filePath })
+    }),
+  importEpub: (req: EpubImportRequest) =>
+    http<JobStatus>('/api/epub/import', { method: 'POST', body: JSON.stringify(req) }),
   fileUrl: (id: string) => withToken(`${API_BASE}/api/downloads/${id}/file`)
 }
 

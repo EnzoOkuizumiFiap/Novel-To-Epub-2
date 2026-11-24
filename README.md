@@ -1,14 +1,15 @@
 # Novel-to-EPUB
 
-> Scraper de web novels que monta `.epub` completos — com tradução por IA,
-> geração de capa, envio pro Kindle e UI desktop.
+> Scraper de web novels e tradutor de `.epub` locais — com tradução por IA,
+> memória de personagens/estilo, geração de capa, envio pro Kindle e UI desktop.
 
 🇧🇷 Português (BR) · [🇬🇧 English](README.en.md)
 
-Você cola a URL de uma novel, escolhe o intervalo de capítulos e o app baixa,
-traduz (opcionalmente), gera capa (opcionalmente), monta o EPUB e — se quiser —
+Você cola a URL de uma novel **ou** importa um arquivo `.epub` que já tenha na
+máquina, escolhe o intervalo de capítulos e o app baixa/lê, traduz
+(opcionalmente), gera capa (opcionalmente), monta o EPUB final e — se quiser —
 envia direto pro seu Kindle por email. Tudo roda local. Cache no SQLite garante
-que nada é re-baixado.
+que nada é re-baixado e que pausas não perdem o trabalho feito.
 
 **Stack:** Python 3.10+ (FastAPI + Typer CLI) · Electron 39 + React 19 + Tailwind 4 · SQLite
 
@@ -75,24 +76,35 @@ que nada é re-baixado.
 
 ## Features
 
-- **Multi-site** via padrão Strategy + auto-discovery — adicionar um site novo é
-  criar **um arquivo** dentro de `backend/app/scraper/adapters/`.
-- **Cache de capítulos** em SQLite. Re-rodar uma novel não baixa nada já visto.
-- **EPUB completo**: capa, metadados (título, autor, idioma, descrição), TOC
-  navegável, CSS legível, paginação por volume.
+- **Multi-site + importação de `.epub` local** via padrão Strategy + auto-discovery
+  — adicionar um site novo é criar **um arquivo** em `backend/app/scraper/adapters/`,
+  e `.epub` locais podem ser importados com preview de capítulos, capa extraída e
+  agrupamento por série na mesma Biblioteca.
+- **Cache completo em SQLite + Pausar e Continuar**: capítulos baixados,
+  traduções concluídas e partes (chunks) intermediárias de capítulos longos ficam
+  salvos localmente — pausar no meio e continuar depois retoma do ponto exato.
+- **EPUB completo**: capa (raspada, extraída do EPUB ou gerada por IA), metadados
+  (título, autor, idioma, descrição), TOC navegável, CSS legível, paginação por
+  volume.
 - **Tradução por IA com cascata de providers** — tenta na ordem
-  `Groq → OpenRouter → Cerebras → Gemini`, com fallback automático em caso de
-  rate-limit. **Glossário automático** mantém nomes próprios consistentes ao
-  longo de centenas de capítulos.
-- **Capa gerada por IA** (Gemini): brief visual derivado dos primeiros
-  capítulos + tipografia editorial.
+  `OpenRouter (:free) → Cerebras → Gemini → Claude`, com trava anti-cobrança
+  para OpenRouter (aceita somente modelos `:free` / `openrouter/free`) e fallback
+  automático em rate-limit. **Glossário automático**, **perfil de estilo** e
+  **âncora de cena** mantêm nomes próprios e tom consistentes ao longo de centenas
+  de capítulos.
+- **Fluxo separado Web vs EPUB local**: capítulos vindos da web vão inteiros
+  por chamada; `.epub` locais (Light Novels longas) são fatiados por limite
+  seguro de cada provider (`120k` Gemini/Claude, `25k` OpenRouter/Cerebras)
+  com contexto contínuo entre blocos.
+- **Capa gerada por IA** (Gemini / brief via Gemini ou Claude): brief visual
+  derivado dos primeiros capítulos + tipografia editorial e galeria de wallpapers.
 - **Envio para Kindle** por SMTP (Gmail, Outlook etc).
-- **API REST + WebSocket** para integração ou frontends alternativos.
-- **App desktop Electron** com tema cream/papel, biblioteca, editor de tradução,
-  diagnóstico de cascata e estatísticas de custo.
-- **CLI completa** (Typer + Rich) — útil pra desenvolver, debugar adapter novo
-  ou rodar em batch.
-- **Menu interativo** (`make`) — guia quem nunca viu o projeto.
+- **Dashboard de Custos & Tokens**: mostra estimativas em R$/USD e consumo real
+  de tokens (entrada/saída) por dia, provider e novel — inclusive para tiers
+  gratuitos.
+- **Inicializador 1-clique no Windows** (`Iniciar Novel-to-EPUB.bat`) que
+  sobe o app desktop e o backend automaticamente, além de **API REST + WebSocket**,
+  **CLI completa** (Typer + Rich) e **Menu interativo** (`make`).
 
 ---
 
@@ -105,7 +117,6 @@ que nada é re-baixado.
 | Royal Road   | `royalroad.com`                                                | ✅ Pronto    |
 | CSNovels     | `csnovels.com` (só obras gratuitas)                            | ✅ Pronto    |
 | WuxiaWorldEU | `wuxiaworld.eu` (não é o wuxiaworld.com)                       | ✅ Pronto (volumes detectados) |
-| NovelBin     | `novelbin.*`                                                   | ⛔ Desligado — domínios fora do ar desde 2026-08 |
 
 Não vê o seu site? Veja [Como adicionar um novo site](#como-adicionar-um-novo-site-adapter)
 ou abra um [adapter request](.github/ISSUE_TEMPLATE/adapter_request.md).
@@ -161,7 +172,7 @@ EPUB saindo em 3 comandos, sem nenhuma API key:
 git clone https://github.com/LucasrsRodrigues/Novel-To-Epub.git
 cd Novel-To-Epub
 make install                              # só o backend (mais rápido que install-all)
-make download URL=https://novelbin.com/b/lord-of-mysteries START=1 END=10
+make download URL=https://novelfull.net/lord-of-the-mysteries.html START=1 END=10
 ```
 
 O EPUB sai em `backend/data/epubs/`. Já tem capa (raspada do site), TOC navegável,
@@ -178,9 +189,10 @@ Pra interface gráfica + tradução IA + envio Kindle, veja [Instalação](#inst
 | **Python** | 3.10 (testado em 3.14) | backend |
 | **Node.js**| 18+ | frontend Electron |
 | **make**   | qualquer  | atalhos (já vem no macOS/Linux; Windows: WSL) |
-| **GEMINI_API_KEY** | opcional | tradução + capa por IA (free tier disponível) |
-| **GROQ_API_KEY** | opcional | tradução (free tier generoso) |
-| **OPENROUTER_API_KEY** / **CEREBRAS_API_KEY** | opcional | providers extras na cascata |
+| **GEMINI_API_KEY** | opcional | tradução (Gemini 4 Hydrogen/Neon/Carbon e 3.5/3.8 Flash) + capa por IA |
+| **OPENROUTER_API_KEY** | opcional | tradução gratuita (somente modelos `:free`) |
+| **CEREBRAS_API_KEY** | opcional | provider extra na cascata (`gpt-oss-120b`) |
+| **ANTHROPIC_API_KEY** | opcional | tradução via Claude / brief de capa |
 | **SMTP** (Gmail/Outlook) | opcional | envio pro Kindle |
 
 Nenhuma chave de API é obrigatória pro download — só pra tradução e envio.
@@ -199,7 +211,9 @@ make install-all     # cria .venv, pip install, npm install
 
 ### Windows
 
-Use **WSL** (Ubuntu) ou rode os comandos manualmente:
+Após instalar as dependências abaixo, você pode abrir tudo com **1 clique**
+dando duplo clique em [`Iniciar Novel-to-EPUB.bat`](Iniciar%20Novel-to-EPUB.bat)
+na raiz do projeto (ou rodar via WSL / terminal):
 
 ```powershell
 git clone https://github.com/LucasrsRodrigues/Novel-To-Epub.git
@@ -222,8 +236,10 @@ cd ..
 
 Tudo fica em `backend/data/` (criado na primeira execução):
 
-- `cache.sqlite3` — todos os capítulos, traduções, glossários, configs
+- `cache.sqlite3` — capítulos, traduções, chunks parciais, glossários, pins e configs
 - `epubs/` — arquivos `.epub` gerados
+- `epub_covers/` — capas extraídas de `.epub` importados localmente
+- `uploads/` — uploads temporários de `.epub` vindos do navegador (removidos automaticamente após importar)
 - `generated_covers/` — capas IA cacheadas
 
 **Nenhum desses arquivos é versionado** (estão no `.gitignore`).
@@ -265,10 +281,10 @@ nas próximas perguntas — útil pra iterar.
 make sites
 
 # Detectar adapter pra uma URL
-make detect URL=https://novelbin.com/b/exemplo
+make detect URL=https://novelfull.net/exemplo.html
 
 # Baixar capítulos 1–10 em EPUB (sem capa, sem tradução)
-make download URL=https://novelbin.com/b/exemplo START=1 END=10
+make download URL=https://novelfull.net/exemplo.html START=1 END=10
 
 # Mesma coisa com logs DEBUG (útil quando adapter falha)
 make download URL=... START=1 END=1 LOG=DEBUG
@@ -296,7 +312,8 @@ make build-electron   # build de produção
 make build-mac        # empacota .dmg (macOS, arm64)
 ```
 
-A primeira vez que o app abre, vai pedir as API keys em **Configurações**.
+No Windows, basta abrir [`Iniciar Novel-to-EPUB.bat`](Iniciar%20Novel-to-EPUB.bat).
+Na primeira abertura, configure suas API keys e a ordem do cascade em **Configurações**.
 
 ### API REST + WebSocket
 
@@ -304,35 +321,41 @@ A primeira vez que o app abre, vai pedir as API keys em **Configurações**.
 make serve            # FastAPI em http://127.0.0.1:8000 (--reload em dev)
 ```
 
-Endpoints principais ([`backend/app/api/routes.py`](backend/app/api/routes.py)):
+Endpoints principais ([`backend/app/api/routes/`](backend/app/api/routes/)):
 
-| Método | Path                                            | Descrição |
-|--------|-------------------------------------------------|-----------|
-| GET    | `/api/health`                                   | status |
-| GET    | `/api/sites`                                    | adapters registrados |
-| POST   | `/api/preview-novel`                            | metadados + volumes (zero custo) |
-| POST   | `/api/downloads`                                | enfileira job (scrape + tradução + capa) |
-| GET    | `/api/downloads/{job_id}`                       | status do job |
-| GET    | `/api/downloads/{job_id}/file`                  | baixa o EPUB |
-| GET    | `/api/library`                                  | novels em cache |
-| GET    | `/api/library/{novel_id}/chapters`              | lista capítulos (com `?language=pt-BR`) |
-| GET    | `/api/library/{novel_id}/chapters/{idx}`        | capítulo (EN + PT) |
+| Método | Path                                               | Descrição |
+|--------|----------------------------------------------------|-----------|
+| GET    | `/api/health`                                      | status |
+| GET    | `/api/sites`                                       | adapters registrados |
+| POST   | `/api/preview-novel`                               | metadados + volumes (zero custo) |
+| POST   | `/api/epub/upload`                                 | envia arquivo `.epub` local para o backend |
+| POST   | `/api/epub/preview`                                | lê metadados, capa e capítulos do `.epub` |
+| POST   | `/api/epub/import`                                 | enfileira tradução/montagem de `.epub` local |
+| POST   | `/api/downloads`                                   | enfileira job (scrape + tradução + capa) |
+| POST   | `/api/downloads/{job_id}/cancel`                   | pausa job em andamento mantendo cache |
+| POST   | `/api/downloads/{job_id}/resume`                   | retoma job pausado/interrompido do cache |
+| GET    | `/api/downloads/{job_id}/file`                     | baixa o EPUB |
+| GET    | `/api/library`                                     | novels em cache |
+| GET    | `/api/library/{novel_id}/cover`                    | serve capa local de EPUB importado |
+| GET    | `/api/library/{novel_id}/chapters`                 | lista capítulos (com `?language=pt-BR`) |
+| GET    | `/api/library/{novel_id}/chapters/{idx}`           | capítulo (EN + PT) |
 | PUT    | `/api/library/{novel_id}/chapters/{idx}/translation` | salva tradução manual |
-| GET    | `/api/library/{novel_id}/glossary`              | nomes próprios da novel |
-| POST   | `/api/volumes/{volume_id}/kindle`               | envia EPUB pro Kindle |
-| POST   | `/api/volumes/{volume_id}/rebuild`              | re-monta EPUB do cache |
-| POST   | `/api/volumes/{volume_id}/regenerate-cover`     | nova capa IA |
-| GET    | `/api/usage/*`                                  | custos por dia/novel/provider |
-| GET    | `/api/debug/translation-status`                 | pins + últimas 20 chamadas IA |
-| GET/PUT| `/api/settings`                                 | config persistida no SQLite |
-| WS     | `/ws/progress`                                  | progresso em tempo real |
+| GET    | `/api/library/{novel_id}/glossary`                 | nomes próprios da novel |
+| DELETE | `/api/library/{novel_id}/translator-pin`           | remove pin de provider/modelo do volume |
+| POST   | `/api/volumes/{volume_id}/kindle`                  | envia EPUB pro Kindle |
+| POST   | `/api/volumes/{volume_id}/rebuild`                 | re-monta EPUB do cache |
+| POST   | `/api/volumes/{volume_id}/regenerate-cover`        | nova capa IA |
+| GET    | `/api/usage/*`                                     | custos estimados + tokens (in/out) por dia/novel/provider |
+| GET    | `/api/debug/translation-status`                    | pins + últimas chamadas IA |
+| GET/PUT| `/api/settings`                                    | config persistida no SQLite |
+| WS     | `/ws/progress`                                     | progresso em tempo real |
 
 Exemplo:
 
 ```bash
 curl -X POST http://localhost:8000/api/preview-novel \
   -H 'Content-Type: application/json' \
-  -d '{"url": "https://novelbin.com/b/exemplo"}'
+  -d '{"url": "https://novelmania.com.br/novels/exemplo"}'
 ```
 
 ---
@@ -345,22 +368,26 @@ limit, 5xx, conteúdo bloqueado), o próximo assume sem perder o capítulo.
 **Ordem default** (configurável em `Configurações` ou via API):
 
 ```
-Groq → OpenRouter → Cerebras → Gemini
+OpenRouter (:free) → Cerebras → Gemini → Claude
 ```
 
-Quando um provider traduz com sucesso o **primeiro** capítulo de um volume,
-ele fica **pinado** pra esse volume — evita inconsistência de estilo entre
-capítulos.
-
-O **glossário** (`backend/app/translation/glossary.py`) é populado
-automaticamente a cada chamada: nomes próprios, termos de power system, lugares.
-Cada entrada guarda termo original, tradução canônica, gênero (n/a, m, f),
-notas e nível de confiança. Em capítulos seguintes, o glossário é injetado no
-prompt — garante que "Yun Che" não vire "Yun Che" num capítulo e "Yun-che" no
-outro.
-
-**Custos** ficam visíveis em `/api/usage/*` (e na tela "Uso" da UI). Free tiers
-do Groq e Cerebras geralmente cobrem novels inteiras sem custo.
+- **Proteção OpenRouter free-only**: o backend e a UI rejeitam qualquer modelo
+  do OpenRouter que não termine em `:free` (ou `openrouter/free`), evitando
+  cobrança acidental.
+- **Pin por volume**: quando um provider traduz com sucesso o primeiro capítulo
+  de um volume, ele fica **pinado** para manter a mesma voz (você pode limpar o
+  pin pelo Diagnóstico caso queira trocar de modelo no meio).
+- **Web vs `.epub` local**: capítulos raspados da web vão inteiros em uma
+  chamada (`allow_chunking=False`). Já `.epub` locais (capítulos extensos de Light
+  Novels) usam fatiamento seguro por provider (`120.000` chars Gemini/Claude,
+  `25.000` OpenRouter/Cerebras) salvando cada chunk no SQLite para permitir
+  **Pausar** e **Continuar tradução** sem retrabalho.
+- **Memória de glossário e cena**: a cada chamada, o glossário é atualizado e
+  injetado nos próximos blocos/capítulos junto do perfil de estilo do volume e de
+  uma âncora de até 10 parágrafos (2.500 chars) do trecho imediatamente anterior.
+- **Custos & tokens** ficam visíveis em `/api/usage/*` e na tela **Custos**,
+  exibindo tanto os valores estimados em R$/USD quanto os **tokens de entrada e
+  saída** consumidos mesmo nos providers gratuitos.
 
 ---
 
@@ -508,10 +535,10 @@ paginação na TOC, lidar com isso dentro de `fetch_novel()`.
 │       │   ├── registry.py
 │       │   ├── http.py            # cliente HTTP com rate-limit + retry
 │       │   ├── cleaner.py         # limpeza padrão de HTML
-│       │   └── adapters/          # NovelBin, NovelMania, NovelFull (WIP)
-│       ├── epub/builder.py        # ebooklib
+│       │   └── adapters/          # NovelMania, NovelFull, RoyalRoad, CSNovels, WuxiaWorldEU
+│       ├── epub/                  # builder.py + reader.py (import de .epub local)
 │       ├── image_gen/             # capa IA (Gemini)
-│       ├── translation/           # cascade + glossário + style + pricing
+│       ├── translation/           # cascade + glossário + style + chunking + pricing
 │       └── kindle/sender.py       # SMTP async
 │
 ├── electron/                      # Electron + React + Tailwind
@@ -557,9 +584,9 @@ Todas opcionais. Use env vars do shell ou um arquivo `backend/.env`.
 | Variável                | Descrição |
 |-------------------------|-----------|
 | `GEMINI_API_KEY`        | tradução + capa IA |
-| `GROQ_API_KEY`          | tradução (free tier) |
-| `OPENROUTER_API_KEY`    | tradução |
+| `OPENROUTER_API_KEY`    | tradução (modelos `:free` apenas) |
 | `CEREBRAS_API_KEY`      | tradução (free tier) |
+| `ANTHROPIC_API_KEY`     | tradução via Claude + brief de capa |
 
 Env vars têm prioridade sobre as chaves salvas via UI (que ficam no SQLite local).
 
@@ -605,9 +632,8 @@ Todos os alvos aceitam variáveis pela linha:
 
 ## Limitações conhecidas
 
+- **Suíte de testes automatizados**: rode `pytest` dentro de `backend/` (`pytest -q --ignore=tests/test_volume_paths.py` no Windows) e `npm run typecheck` em `electron/`.
 - **Capas IA usam fonts do sistema macOS** (Georgia). Em outros SOs vai cair em fallback. TODO: embarcar TTF.
-- **Sem testes automatizados ainda.** Validação é manual via `make detect` /
-  `make download LOG=DEBUG`. CI checa lint + smoke imports.
 - **Build do Electron pra macOS roda sem assinatura** (Gatekeeper avisa, mas
   permite). Notarização desabilitada no `electron-builder.yml`.
 - **Rate-limit dos sites:** delay default `1–3s`. Se levar block, aumentar
@@ -652,5 +678,5 @@ Este projeto usa bibliotecas de terceiros — ver `backend/requirements.txt` e
 
 - [**ebooklib**](https://github.com/aerkalov/ebooklib) — geração de EPUB.
 - [**electron-vite**](https://electron-vite.org) — template Electron + Vite.
-- **Groq, Cerebras, OpenRouter, Google AI Studio** — pelos free tiers que
-  viabilizam o uso sem custo pra novels inteiras.
+- **OpenRouter, Cerebras, Google AI Studio, Anthropic** — pelos providers de IA
+  que viabilizam a tradução de web novels e EPUBs inteiros.

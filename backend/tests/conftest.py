@@ -18,6 +18,7 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(settings, "api_token", None)
     monkeypatch.setattr(database, "_engine", None)
+    monkeypatch.setattr(database, "_initialized_engine", None)
     monkeypatch.setattr(database, "_SessionFactory", None)
     yield tmp_path
     if database._engine is not None:

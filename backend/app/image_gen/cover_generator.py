@@ -36,21 +36,36 @@ from app.translation.retry import call_with_retry
 log = get_logger("cover")
 
 
-# Fontes do sistema mac (Georgia tem 4 variantes — perfeito pra capa editorial).
-# Em outra plataforma, Pillow vai cair no default bitmap (feio) — TODO embarcar
-# uma TTF em backend/app/assets/ pra cross-platform.
-_FONT_REGULAR = "/System/Library/Fonts/Supplemental/Georgia.ttf"
-_FONT_BOLD = "/System/Library/Fonts/Supplemental/Georgia Bold.ttf"
-_FONT_ITALIC = "/System/Library/Fonts/Supplemental/Georgia Italic.ttf"
-_FONT_BOLD_ITALIC = "/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf"
+# Fontes Georgia (macOS e Windows — fallback para bitmap se indisponivel).
+_FONT_REGULAR = (
+    "/System/Library/Fonts/Supplemental/Georgia.ttf",
+    "C:/Windows/Fonts/georgia.ttf",
+)
+_FONT_BOLD = (
+    "/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
+    "C:/Windows/Fonts/georgiab.ttf",
+)
+_FONT_ITALIC = (
+    "/System/Library/Fonts/Supplemental/Georgia Italic.ttf",
+    "C:/Windows/Fonts/georgiai.ttf",
+)
+_FONT_BOLD_ITALIC = (
+    "/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf",
+    "C:/Windows/Fonts/georgiaz.ttf",
+)
 
 
-def _load_font(path: str, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    try:
-        return ImageFont.truetype(path, size)
-    except OSError:
-        log.warning("font_missing", path=path)
-        return ImageFont.load_default()
+def _load_font(
+    paths: str | tuple[str, ...], size: int
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    candidates = (paths,) if isinstance(paths, str) else paths
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    log.warning("font_missing", paths=candidates)
+    return ImageFont.load_default()
 
 
 def _wrap_text(
@@ -645,7 +660,7 @@ async def generate_or_cache_cover(
     glossary: list[GlossaryEntry],
     cover_style: str | None = None,
     force: bool = False,
-    text_model: str = "gemini-2.5-flash",
+    text_model: str = "gemini-3.5-flash-lite",
     image_model: str = "gemini-2.5-flash-image",
 ) -> tuple[bytes, str]:
     """Retorna ``(image_bytes, mime)``. Usa cache se existir, senao gera + salva.

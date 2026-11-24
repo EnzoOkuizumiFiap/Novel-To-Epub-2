@@ -7,7 +7,7 @@ import { downloadCover } from '@renderer/lib/coverFiles'
 import { slugifyName } from '@renderer/lib/novel'
 
 // Linha de uma resolução no modal: rótulo + botões (download local / nativo).
-export function ResolutionRow({
+function ResolutionRow({
   title,
   children
 }: {

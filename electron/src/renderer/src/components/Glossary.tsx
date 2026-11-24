@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Search, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react'
 import { api, type GlossaryEntry, type NovelSummary } from '@renderer/lib/api'
 import { cn } from '@renderer/lib/utils'
 import { Folio } from '@renderer/components/decorative/Folio'
@@ -89,6 +89,7 @@ export function Glossary({
   const [search, setSearch] = useState('')
   const [activeKinds, setActiveKinds] = useState<Set<string>>(new Set())
   const [activeConfs, setActiveConfs] = useState<Set<string>>(new Set())
+  const [selectedTerm, setSelectedTerm] = useState<string | null>(null)
 
   useEffect(() => {
     api
@@ -106,11 +107,14 @@ export function Glossary({
 
   useEffect(() => {
     if (novelId == null) return
-    setEntries(null)
+    let active = true
     api
       .getGlossary(novelId)
-      .then(setEntries)
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .then((list) => active && setEntries(list))
+      .catch((err) => active && setError(err instanceof Error ? err.message : String(err)))
+    return () => {
+      active = false
+    }
   }, [novelId, reloadKey])
 
   const selected = novels?.find((n) => n.id === novelId)
@@ -175,6 +179,10 @@ export function Glossary({
 
   const hasFilters = !!search || activeKinds.size > 0 || activeConfs.size > 0
 
+  const selectedIndex =
+    filtered && selectedTerm ? filtered.findIndex((e) => e.term === selectedTerm) : -1
+  const selectedEntry = selectedIndex >= 0 && filtered ? filtered[selectedIndex] : null
+
   return (
     <div className="space-y-8">
       <header className="space-y-3">
@@ -201,7 +209,11 @@ export function Glossary({
           </div>
           <select
             value={novelId ?? ''}
-            onChange={(e) => setNovelId(Number(e.target.value))}
+            onChange={(e) => {
+              setEntries(null)
+              setSelectedTerm(null)
+              setNovelId(Number(e.target.value))
+            }}
             className="font-sans h-10 rounded-xl border border-[var(--border-medium)] bg-[var(--paper-100)] px-4 text-sm text-[var(--ink-900)] shadow-[inset_0_1px_2px_rgba(80,50,20,0.05)] outline-none focus-visible:border-[var(--stamp-red)] focus-visible:ring-2 focus-visible:ring-[var(--stamp-red)]/15"
           >
             {novels.map((n) => (
@@ -219,7 +231,10 @@ export function Glossary({
         <GlossaryCleanup
           key={novelId}
           novelId={novelId}
-          onApplied={() => setReloadKey((k) => k + 1)}
+          onApplied={() => {
+            setEntries(null)
+            setReloadKey((k) => k + 1)
+          }}
         />
       )}
 
@@ -330,67 +345,61 @@ export function Glossary({
               'shadow-[0_1px_0_rgba(255,250,235,0.85)_inset,0_1px_3px_rgba(80,50,20,0.05),0_14px_28px_-18px_rgba(80,50,20,0.20)]'
             ].join(' ')}
           >
-            <div className="overflow-x-auto">
+            <div
+              className="overflow-x-auto focus:outline-none"
+              tabIndex={0}
+              role="region"
+              aria-label="Tabela do glossário"
+            >
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-[var(--border-soft)]">
-                    <th className="font-sans px-6 py-3 text-left text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]">
+                    <th
+                      scope="col"
+                      className="font-sans px-6 py-3 text-left text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]"
+                    >
                       Termo
                     </th>
-                    <th className="font-sans px-3 py-3 text-left text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]">
+                    <th
+                      scope="col"
+                      className="font-sans px-3 py-3 text-left text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]"
+                    >
                       Canônico
                     </th>
-                    <th className="font-sans px-3 py-3 text-left text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]">
+                    <th
+                      scope="col"
+                      className="font-sans px-3 py-3 text-left text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]"
+                    >
                       Tipo
                     </th>
-                    <th className="font-sans px-3 py-3 text-left text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]">
+                    <th
+                      scope="col"
+                      className="font-sans px-3 py-3 text-left text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]"
+                    >
                       Gênero
                     </th>
-                    <th className="font-sans px-3 py-3 text-left text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]">
+                    <th
+                      scope="col"
+                      className="font-sans px-3 py-3 text-left text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]"
+                    >
                       Conf
                     </th>
-                    <th className="font-sans px-6 py-3 text-left text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]">
+                    <th
+                      scope="col"
+                      className="font-sans px-6 py-3 text-left text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]"
+                    >
                       Notas
                     </th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map((e, i) => (
-                    <tr
+                    <GlossaryRow
                       key={e.term}
-                      className={cn(
-                        'border-b border-[var(--border-soft)] last:border-b-0',
-                        i % 2 === 1 && 'bg-[var(--paper-50)]/40'
-                      )}
-                    >
-                      <td className="font-display px-6 py-3 text-[15px] font-medium text-[var(--ink-900)]">
-                        {e.term}
-                      </td>
-                      <td className="font-sans px-3 py-3 text-[13px] italic text-[var(--ink-500)]">
-                        {e.canonical_pt}
-                      </td>
-                      <td className="px-3 py-3">
-                        <KindPill kind={e.kind} />
-                      </td>
-                      <td className="font-sans px-3 py-3 text-[12px] text-[var(--ink-700)]">
-                        {e.gender === 'n/a' || e.gender === 'unknown' ? (
-                          <span className="text-[var(--ink-300)]">—</span>
-                        ) : (
-                          e.gender
-                        )}
-                      </td>
-                      <td className="px-3 py-3">
-                        <ConfBadge conf={e.confidence} />
-                        {e.source === 'wiki' && (
-                          <span className="font-sans ml-1 text-[9px] tracking-[0.18em] uppercase text-[var(--book-4)]">
-                            · wiki
-                          </span>
-                        )}
-                      </td>
-                      <td className="font-sans px-6 py-3 text-[12px] leading-relaxed text-[var(--ink-500)]">
-                        <span className="line-clamp-2 block max-w-md italic">{e.notes}</span>
-                      </td>
-                    </tr>
+                      entry={e}
+                      striped={i % 2 === 1}
+                      onOpen={() => setSelectedTerm(e.term)}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -398,10 +407,222 @@ export function Glossary({
           </div>
           <p className="font-sans text-right text-[11px] tracking-wide text-[var(--ink-400)]">
             mostrando {filtered.length} de {entries?.length ?? 0} entradas
-            {hasFilters && ' (filtrado)'}
+            {hasFilters && ' (filtrado)'} · clique em qualquer linha para ler a nota completa
           </p>
         </>
       )}
+
+      {selectedEntry && filtered && (
+        <GlossaryDetailModal
+          entry={selectedEntry}
+          index={selectedIndex}
+          total={filtered.length}
+          onClose={() => setSelectedTerm(null)}
+          onNavigate={(nextIdx) => {
+            const target = filtered[nextIdx]
+            if (target) setSelectedTerm(target.term)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function GlossaryRow({
+  entry,
+  striped,
+  onOpen
+}: {
+  entry: GlossaryEntry
+  striped: boolean
+  onOpen: () => void
+}): React.JSX.Element {
+  return (
+    <tr
+      onClick={onOpen}
+      className={cn(
+        'cursor-pointer border-b border-[var(--border-soft)] align-top transition-colors last:border-b-0 hover:bg-[var(--paper-200)]/60',
+        striped && 'bg-[var(--paper-50)]/40'
+      )}
+    >
+      <th
+        scope="row"
+        className="font-display px-6 py-3 text-left text-[15px] font-medium text-[var(--ink-900)]"
+      >
+        {entry.term}
+      </th>
+      <td className="font-sans px-3 py-3 text-[13px] italic text-[var(--ink-500)]">
+        {entry.canonical_pt}
+      </td>
+      <td className="whitespace-nowrap px-3 py-3">
+        <KindPill kind={entry.kind} />
+      </td>
+      <td className="font-sans whitespace-nowrap px-3 py-3 text-[12px] text-[var(--ink-700)]">
+        {entry.gender === 'n/a' || entry.gender === 'unknown' ? (
+          <span className="text-[var(--ink-300)]">—</span>
+        ) : (
+          entry.gender
+        )}
+      </td>
+      <td className="whitespace-nowrap px-3 py-3">
+        <ConfBadge conf={entry.confidence} />
+        {entry.source === 'wiki' && (
+          <span className="font-sans ml-1 text-[9px] tracking-[0.18em] uppercase text-[var(--book-4)]">
+            · wiki
+          </span>
+        )}
+      </td>
+      <td className="font-sans px-6 py-3 text-[12px] leading-relaxed text-[var(--ink-500)]">
+        {entry.notes ? (
+          <>
+            <span className="line-clamp-2 max-w-md italic">{entry.notes}</span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpen()
+              }}
+              className="mt-1 text-[11px] font-medium text-[var(--ink-700)] underline decoration-dotted hover:text-[var(--ink-900)]"
+            >
+              abrir nota
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpen()
+            }}
+            className="text-[11px] text-[var(--ink-400)] hover:text-[var(--ink-700)] hover:underline"
+          >
+            detalhes
+          </button>
+        )}
+      </td>
+    </tr>
+  )
+}
+
+function GlossaryDetailModal({
+  entry,
+  index,
+  total,
+  onClose,
+  onNavigate
+}: {
+  entry: GlossaryEntry
+  index: number
+  total: number
+  onClose: () => void
+  onNavigate: (nextIdx: number) => void
+}): React.JSX.Element {
+  const hasPrev = index > 0
+  const hasNext = index < total - 1
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose()
+      else if (e.key === 'ArrowLeft' && hasPrev) onNavigate(index - 1)
+      else if (e.key === 'ArrowRight' && hasNext) onNavigate(index + 1)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose, onNavigate, index, hasPrev, hasNext])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="glossary-detail-title"
+    >
+      <div
+        className="w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-2xl border border-[var(--border-soft)] bg-[var(--paper-100)] p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--border-soft)] pb-4">
+          <div className="min-w-0 space-y-1">
+            <h3
+              id="glossary-detail-title"
+              className="font-display text-2xl font-medium tracking-tight text-[var(--ink-900)]"
+            >
+              {entry.term}
+            </h3>
+            <p className="font-sans text-sm italic text-[var(--ink-500)]">{entry.canonical_pt}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Fechar"
+            className="rounded-lg p-1.5 text-[var(--ink-400)] transition-colors hover:bg-[var(--paper-200)] hover:text-[var(--ink-800)]"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2.5 text-[12px]">
+          <KindPill kind={entry.kind} />
+          <ConfBadge conf={entry.confidence} />
+          {entry.gender !== 'n/a' && entry.gender !== 'unknown' && (
+            <span className="font-sans rounded-full border border-[var(--border-medium)] px-2.5 py-0.5 text-[11px] text-[var(--ink-700)]">
+              gênero: {entry.gender}
+            </span>
+          )}
+          <span className="font-sans rounded-full border border-[var(--border-medium)] px-2.5 py-0.5 text-[11px] uppercase tracking-wide text-[var(--ink-500)]">
+            {entry.source === 'wiki' ? 'wiki' : 'IA'}
+          </span>
+          {entry.first_seen_chapter != null && (
+            <span className="font-sans text-[11px] text-[var(--ink-400)]">
+              visto no cap. {entry.first_seen_chapter}
+            </span>
+          )}
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <div className="font-sans text-[10px] font-semibold tracking-[0.18em] uppercase text-[var(--ink-400)]">
+            Notas completas
+          </div>
+          <div className="rounded-xl border border-[var(--border-soft)] bg-[var(--paper-50)] p-4">
+            {entry.notes ? (
+              <p className="font-sans whitespace-pre-wrap break-words text-[14px] leading-relaxed text-[var(--ink-800)]">
+                {entry.notes}
+              </p>
+            ) : (
+              <p className="font-sans text-[13px] italic text-[var(--ink-400)]">
+                Sem notas registradas para esta entrada.
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-5 flex items-center justify-between border-t border-[var(--border-soft)] pt-4">
+          <span className="font-sans text-[11px] tracking-wide text-[var(--ink-400)]">
+            {index + 1} de {total}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={!hasPrev}
+              onClick={() => onNavigate(index - 1)}
+              className="font-sans inline-flex items-center gap-1 rounded-lg border border-[var(--border-medium)] px-3 py-1.5 text-[12px] text-[var(--ink-700)] transition-colors hover:bg-[var(--paper-200)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronLeft className="size-3.5" />
+              Anterior
+            </button>
+            <button
+              type="button"
+              disabled={!hasNext}
+              onClick={() => onNavigate(index + 1)}
+              className="font-sans inline-flex items-center gap-1 rounded-lg border border-[var(--border-medium)] px-3 py-1.5 text-[12px] text-[var(--ink-700)] transition-colors hover:bg-[var(--paper-200)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Próxima
+              <ChevronRight className="size-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

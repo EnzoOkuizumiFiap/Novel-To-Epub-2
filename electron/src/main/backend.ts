@@ -38,7 +38,7 @@ export interface BackendInfo {
   token: string
 }
 
-export interface BackendHooks {
+interface BackendHooks {
   /** O backend caiu e foi re-iniciado (mesma porta/token — a UI segue valendo). */
   onRestarted?: () => void
   /** O backend caiu e nao voltou (limite de restarts). O app nao funciona mais. */

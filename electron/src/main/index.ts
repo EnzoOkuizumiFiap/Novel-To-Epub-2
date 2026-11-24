@@ -165,6 +165,20 @@ ipcMain.handle(
   }
 )
 
+ipcMain.handle('pick-epub-file', async (evt) => {
+  const win = BrowserWindow.fromWebContents(evt.sender) ?? BrowserWindow.getFocusedWindow()
+  const opts: Electron.OpenDialogOptions = {
+    title: 'Selecionar livro .epub',
+    properties: ['openFile'],
+    filters: [{ name: 'Livros EPUB', extensions: ['epub'] }]
+  }
+  const { canceled, filePaths } = win
+    ? await dialog.showOpenDialog(win, opts)
+    : await dialog.showOpenDialog(opts)
+  if (canceled || filePaths.length === 0) return { canceled: true }
+  return { filePath: filePaths[0] }
+})
+
 // O backend caiu e nao voltou: sem ele o app nao faz nada. Oferece reabrir.
 function backendFatal(err: Error): void {
   console.error('[main] backend parou de vez:', err)

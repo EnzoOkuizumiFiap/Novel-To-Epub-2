@@ -42,7 +42,7 @@ def test_migrate_moves_flat_files_and_is_idempotent(tmp_path):
     new = novel_epub_dir(settings.output_dir, "novel-a") / "volume-1.epub"
     assert vs.get(v1)["output_path"] == str(new) and new.read_text() == "A"
     assert not flat.exists()
-    assert vs.get(v2)["output_path"].endswith("novel-b/sumiu.epub")
+    assert Path(vs.get(v2)["output_path"]).parts[-2:] == ("novel-b", "sumiu.epub")
     assert vs.get(v3)["output_path"] == str(outside)  # fora de epubs/: intocado
     assert vs.migrate_flat_paths() == 0
 

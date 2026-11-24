@@ -33,7 +33,7 @@ async def preview_novel(req: NovelPreviewRequest) -> NovelPreviewOut:
     custo de IA. UI usa pra mostrar capa/título/dropdown de volume antes da captura.
 
     Volumes são detectados a partir de `ChapterRef.volume_label` preenchido
-    pelo adapter (NovelMania sim; NovelBin não → retorna `volumes: []`).
+    pelo adapter (NovelMania sim; NovelFull não → retorna `volumes: []`).
     """
     from app.scraper.http import HttpClient
     url = req.url.strip()
@@ -86,7 +86,16 @@ async def preview_novel(req: NovelPreviewRequest) -> NovelPreviewOut:
 def create_download(
     req: DownloadRequest, jobs: JobManager = Depends(get_jobs)
 ) -> JobStatus:
-    if not registry.supports(req.url):
+    if req.url.startswith("epub://"):
+        with get_session() as s:
+            exists = s.scalar(
+                select(orm.Novel.id).where(orm.Novel.source_url == req.url)
+            )
+        if exists is None:
+            raise HTTPException(
+                status_code=404, detail=f"novel EPUB nao encontrada: {req.url}"
+            )
+    elif not registry.supports(req.url):
         raise HTTPException(status_code=400, detail=f"site nao suportado: {req.url}")
     return jobs.enqueue(req).to_status()
 
